@@ -1,7 +1,10 @@
 # cvpipe/__init__.py
 # Everything a component author needs is importable from cvpipe directly.
 
-from .frame import Frame, SlotSchema
+from .bus import ResultBus, FrameResult
+from .builder import build
+from .bridge import AsyncQueueBridge
+from .config import PipelineConfig, ComponentSpec, BranchSpec
 from .component import Component
 from .event import (
     Event,
@@ -11,13 +14,6 @@ from .event import (
     FrameDroppedEvent,
     PipelineStateEvent,
 )
-from .bus import ResultBus, FrameResult
-from .probe import Probe, DiagnosticsProbe, FrameDiagnostics, ComponentTrace
-from .pipeline import Pipeline
-from .scheduler import FrameSource
-from .config import PipelineConfig, ComponentSpec, BranchSpec
-from .registry import ComponentRegistry
-from .bridge import AsyncQueueBridge
 from .errors import (
     CvPipeError,
     PipelineConfigError,
@@ -29,6 +25,11 @@ from .errors import (
     ComponentNotFoundError,
     AmbiguousComponentError,
 )
+from .frame import Frame, SlotSchema
+from .probe import Probe, DiagnosticsProbe, FrameDiagnostics, ComponentTrace
+from .pipeline import Pipeline
+from .scheduler import FrameSource
+from .registry import ComponentRegistry
 
 __version__ = "0.1.0"
 __all__ = [
