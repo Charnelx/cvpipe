@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face Detection with cvpipe</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>CV Pipeline: Face Detection</h1>
+            <p>Built with cvpipe, FastAPI, and YOLOv8</p>
+        </header>
+        
+        <main>
+            <div class="video-container">
+                <img id="video-stream" src="/video_feed" alt="Live Camera Feed">
+                <div class="status-overlay" id="inference-status">Inference: OFF</div>
+            </div>
+
+            <div class="controls">
+                <button id="toggle-btn" class="btn btn-primary">Start Inference</button>
+            </div>
+        </main>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>

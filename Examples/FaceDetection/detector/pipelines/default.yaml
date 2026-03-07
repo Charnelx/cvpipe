@@ -1,0 +1,20 @@
+pipeline:
+  source: rtsp_source
+  source_config:
+    rtsp_url: "rtsp://mediamtx:8554/cam"
+
+  components:
+    - module: router
+      id: router
+    - module: renderer
+      id: renderer
+
+  branches:
+    - id: inference_branch
+      exclusive: true
+      trigger: "inference_enabled == True"
+      inject_after: router
+      merge_before: renderer
+      components:
+        - module: yolov8_detector
+          id: face_detector
