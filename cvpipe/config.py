@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
@@ -81,6 +81,23 @@ class BranchSpec:
 
 
 @dataclass
+class ValidationConfig:
+    """
+    Runtime slot validation settings.
+
+    Attributes
+    ----------
+    mode : Literal["off", "warn", "strict"]
+        Validation mode:
+        - "off": No validation (production)
+        - "warn": Log warnings on mismatch (development, default)
+        - "strict": Raise SlotValidationError (testing)
+    """
+
+    mode: Literal["off", "warn", "strict"] = "warn"
+
+
+@dataclass
 class PipelineConfig:
     """
     Complete parsed representation of a pipeline YAML file.
@@ -95,6 +112,7 @@ class PipelineConfig:
     components: list[ComponentSpec] = field(default_factory=list)
     connections: dict[str, list[str]] | None = None
     branches: list[BranchSpec] = field(default_factory=list)
+    validation: ValidationConfig = field(default_factory=ValidationConfig)
 
     @classmethod
     def from_yaml(cls, path: Path | str) -> "PipelineConfig":
@@ -131,7 +149,9 @@ class PipelineConfig:
             raise PipelineConfigError([f"YAML parse error in {path}: {e}"])
 
         if not isinstance(raw, dict) or "pipeline" not in raw:
-            raise PipelineConfigError([f"YAML file must have a top-level 'pipeline' key: {path}"])
+            raise PipelineConfigError(
+                [f"YAML file must have a top-level 'pipeline' key: {path}"]
+            )
 
         pipeline_raw = raw["pipeline"]
 
@@ -174,6 +194,18 @@ class PipelineConfig:
             if branch:
                 branches.append(branch)
 
+        # ── validation (optional) ───────────────────────────────────────────────
+        validation_raw = pipeline_raw.get("validation", {}) or {}
+        valid_modes = {"off", "warn", "strict"}
+        validation_mode = validation_raw.get("mode", "warn")
+        if validation_mode not in valid_modes:
+            errors.append(
+                f"pipeline.validation.mode must be one of {valid_modes}, "
+                f"got '{validation_mode}'"
+            )
+            validation_mode = "warn"
+        validation = ValidationConfig(mode=validation_mode)
+
         if errors:
             raise PipelineConfigError(errors)
 
@@ -183,6 +215,7 @@ class PipelineConfig:
             components=components,
             connections=connections,
             branches=branches,
+            validation=validation,
         )
 
 

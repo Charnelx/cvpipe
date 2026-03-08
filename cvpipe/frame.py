@@ -160,22 +160,25 @@ class Frame:
         Wall-clock capture timestamp in seconds (time.monotonic() at capture).
         Used for latency measurement and diagnostics.
 
-    slots : dict[str, torch.Tensor]
+    slots : dict[str, torch.Tensor] | ValidatedSlots
         Named tensor slots. Keys are slot names (matching SlotSchema.name
         where is_tensor_slot() is True). Values are torch.Tensor on the
         declared device.
 
         Access pattern:
-            bgr = frame.slots["frame_bgr"]           # read
-            frame.slots["proposals_xyxy"] = tensor   # write
+            bgr = frame.slots["frame_bgr"] # read
+            frame.slots["proposals_xyxy"] = tensor # write
+
+        When validation is active, returns a ValidatedSlots wrapper that
+        validates writes against the current component's OUTPUTS schema.
 
     meta : dict[str, Any]
         CPU-side metadata: small scalars, strings, dicts of scores,
         lists of labels, routing decisions. Not for large tensors.
 
         Access pattern:
-            mode = frame.meta["proposal_mode"]        # read
-            frame.meta["routing_decision"] = "scan"   # write
+            mode = frame.meta["proposal_mode"] # read
+            frame.meta["routing_decision"] = "scan" # write
 
     Notes
     -----
@@ -186,20 +189,78 @@ class Frame:
       optimisation); treat them as ephemeral.
     """
 
-    __slots__ = ("idx", "ts", "slots", "meta")
+    __slots__ = ("idx", "ts", "_slots", "_meta", "_validation_context")
 
     idx: int
     ts: float
-    slots: dict[str, Any]
-    meta: dict[str, Any]
+    _slots: dict[str, Any]
+    _meta: dict[str, Any]
+    _validation_context: tuple[Any, str] | None  # (Component, mode)
 
     def __init__(self, idx: int, ts: float) -> None:
         self.idx = idx
         self.ts = ts
-        self.slots: dict[str, Any] = {}
-        self.meta: dict[str, Any] = {}
+        self._slots: dict[str, Any] = {}
+        self._meta: dict[str, Any] = {}
+        self._validation_context = None
+
+    def _set_validation(self, component: Any, mode: str) -> None:
+        """
+        Enable validation for a specific component.
+
+        Called by Scheduler before each component.process().
+        After this call, frame.slots returns a ValidatedSlots wrapper.
+
+        Parameters
+        ----------
+        component : Component
+            The component about to be processed.
+        mode : str
+            Validation mode: "off", "warn", or "strict".
+        """
+        if mode == "off":
+            self._validation_context = None
+        else:
+            self._validation_context = (component, mode)
+
+    def _clear_validation(self) -> None:
+        """
+        Disable validation after component.process() completes.
+
+        Called by Scheduler in a finally block after each component.
+        """
+        self._validation_context = None
+
+    @property
+    def slots(self) -> dict[str, Any]:
+        """
+        Return slot storage, optionally wrapped for validation.
+
+        When validation is active (set via _set_validation), returns
+        a ValidatedSlots wrapper that validates writes against the
+        current component's OUTPUTS schema.
+
+        When validation is off, returns the raw internal dict.
+        """
+        if self._validation_context is None:
+            return self._slots
+
+        from .validated_slots import ValidatedSlots
+
+        component, mode = self._validation_context
+        schemas = {s.name: s for s in component.OUTPUTS}
+        return ValidatedSlots(
+            self._slots,
+            schemas,
+            mode,  # type: ignore
+            component.component_id,
+        )
+
+    @property
+    def meta(self) -> dict[str, Any]:
+        return self._meta
 
     def __repr__(self) -> str:
-        slot_names = list(self.slots.keys())
-        meta_keys = list(self.meta.keys())
+        slot_names = list(self._slots.keys())
+        meta_keys = list(self._meta.keys())
         return f"Frame(idx={self.idx}, ts={self.ts:.3f}, slots={slot_names}, meta={meta_keys})"

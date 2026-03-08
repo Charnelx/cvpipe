@@ -7,7 +7,7 @@ import time
 import traceback
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from .frame import Frame
 from .bus import ResultBus, FrameResult
@@ -149,6 +149,7 @@ class Scheduler:
         event_bus: EventBus | None = None,
         source_frame_slot: str = "frame_raw",
         components: list[Component] | None = None,
+        validation_mode: Literal["off", "warn", "strict"] = "warn",
     ) -> None:
         self._source = source
         if segments is not None:
@@ -160,6 +161,7 @@ class Scheduler:
         self._result_bus = result_bus
         self._event_bus = event_bus
         self._source_slot = source_frame_slot
+        self._validation_mode = validation_mode
 
         self._thread: threading.Thread | None = None
         self._stop_flag: threading.Event = threading.Event()
@@ -199,7 +201,9 @@ class Scheduler:
         if self._thread is not None:
             self._thread.join(timeout=timeout)
             if self._thread.is_alive():
-                logger.warning("[Scheduler] Streaming thread did not stop within %.1fs", timeout)
+                logger.warning(
+                    "[Scheduler] Streaming thread did not stop within %.1fs", timeout
+                )
         logger.info("[Scheduler] Stopped")
 
     def pause(self, timeout: float = 2.0) -> None:
@@ -286,7 +290,9 @@ class Scheduler:
         try:
             return bool(eval(src, {"__builtins__": {}}, dict(frame.meta)))
         except Exception as e:
-            logger.error(f"[Scheduler] Branch trigger '{src}' eval failed on frame {frame.idx}: {e!r}")
+            logger.error(
+                f"[Scheduler] Branch trigger '{src}' eval failed on frame {frame.idx}: {e!r}"
+            )
             return False
 
     def _run(self) -> None:
@@ -303,7 +309,9 @@ class Scheduler:
 
             if result is None:
                 self._event_bus.publish(
-                    FrameDroppedEvent(reason="source_stall", frame_idx=self._source_frame_idx)
+                    FrameDroppedEvent(
+                        reason="source_stall", frame_idx=self._source_frame_idx
+                    )
                 )
                 time.sleep(0.01)
                 continue
@@ -378,14 +386,13 @@ class Scheduler:
         return True
 
     def _run_single_component(
-        self,
-        component: Component,
-        frame: Frame,
-        source_idx: int,
+        self, component: Component, frame: Frame, source_idx: int
     ) -> bool:
         """Run a single component and handle errors/metrics."""
         cid = component.component_id
         t_start = time.perf_counter()
+
+        frame._set_validation(component, self._validation_mode)
         try:
             component.process(frame)
         except Exception as exc:
@@ -416,11 +423,15 @@ class Scheduler:
                 FrameDroppedEvent(reason="component_error", frame_idx=source_idx)
             )
             return False
+        finally:
+            frame._clear_validation()
 
         t_elapsed = (time.perf_counter() - t_start) * 1000
         self._error_counts[cid] = 0
         self._event_bus.publish(
-            ComponentMetricEvent(component_id=cid, latency_ms=t_elapsed, frame_idx=frame.idx)
+            ComponentMetricEvent(
+                component_id=cid, latency_ms=t_elapsed, frame_idx=frame.idx
+            )
         )
 
         for probe in self._probes.get(cid, []):

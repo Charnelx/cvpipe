@@ -220,6 +220,7 @@ pipeline = Pipeline(
 | `connections` | dict / None | None | Explicit slot connections (auto-inferred if omitted) |
 | `result_bus` | ResultBus / None | auto | Created with `capacity=4` if not provided |
 | `event_bus` | EventBus / None | auto | Created if not provided |
+| `validation_mode` | Literal["off", "warn", "strict"] | `"warn"` | Runtime slot validation mode |
 
 **Properties:**
 
@@ -238,6 +239,7 @@ pipeline = Pipeline(
 | `stop()` | Drain current frame, teardown all components, stop threads |
 | `reset()` | Pause Scheduler, call `reset()` on all components in order, resume |
 | `component(id)` | Return component by YAML ID. Searches main path and all branches. Raises `KeyError` if not found |
+| `set_validation_mode(mode)` | Change validation mode. Must be called before `start()` |
 
 ---
 
@@ -526,4 +528,21 @@ All custom events must be `@dataclass(frozen=True)` subclasses of `Event`.
 | `SlotNotFoundError` | A component requires a slot that no upstream component produces |
 | `CoordinateSystemError` | Writer and reader declare different coordinate systems |
 | `DuplicateSlotWriterError` | Two components declare the same slot in `OUTPUTS` |
+| `SlotValidationError` | Runtime slot validation fails in `strict` mode — dtype, shape, or device mismatch |
 | `CvPipeError` | Base class for all framework exceptions |
+
+---
+
+## Configuration classes
+
+### ValidationConfig
+
+```python
+from cvpipe.config import ValidationConfig
+
+config = ValidationConfig(mode="warn")
+```
+
+| Attribute | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `mode` | Literal["off", "warn", "strict"] | `"warn"` | Runtime slot validation mode |
