@@ -1,103 +1,236 @@
 # Core Concepts
 
-This document explains the fundamental concepts behind cvpipe.
+The mental model behind cvpipe. Read this before anything else.
 
-## The Pipeline Model
+---
 
-A cvpipe pipeline is a directed acyclic graph (DAG) of components. Each component represents one processing stage:
+## The pipeline as a DAG
+
+A cvpipe pipeline is a **directed acyclic graph** of components. Each node is one
+processing stage. A `Frame` object flows through every node in topological order — each
+component reads what upstream stages wrote and writes its own outputs.
+
+The simplest pipeline is a straight line:
 
 ```
-FrameSource → Proposer → Embedder → Scorer → ResultBus
+WebcamSource --> [Preprocessor] --> [Detector] --> [Tracker] --> [ResultAssembler]
 ```
 
-Components are executed in topological order. The same `Frame` instance is passed sequentially through all components — no data is copied between stages.
+Execution within a single frame is **strictly sequential and single-threaded**. The same
+`Frame` instance is passed to each component in order. No data is copied between stages.
+
+---
+
+## Non-linear execution — branches
+
+An **exclusive branch** is a structural if/else in the pipeline. When a condition holds,
+a segment of the main path is bypassed and alternative components run instead.
+
+```
+                         true
+[Preprocessor] --(mode='fast')?---------> [LightweightDetector] --------+
+                         |                                               |
+                         | false                                         v
+                         +-----------> [FasterRCNN] --> [Classifier] ---+
+                                                                        |
+                                                                   [Tracker]
+```
+
+`mode` is written to `frame.meta` by `Preprocessor`. The branch is declared in YAML —
+no component contains any `if` checks for routing.
+
+### Nested branches
+
+Branches can nest as long as one range is fully contained within the other. The typical
+pattern is an outer branch that disables all inference, and inner branches that select
+between detector variants:
+
+```
+[Preprocessor]
+      |
+      +-- inference_enabled=False --> [PassthroughMarker] -----------------+
+      |                                                                     |
+      +-- inference_enabled=True                                           |
+                  |                                                        |
+                  +-- mode='fast' --> [LightweightDetector] -------+       |
+                  |                                                |       |
+                  +-- mode='full' --> [FasterRCNN] --> [Classifier]+       |
+                                                           |               |
+                                                      [Tracker]            |
+                                                           |               |
+                                                [ResultAssembler] <--------+
+```
+
+Both branch conditions are YAML declarations. `Preprocessor` writes both
+`frame.meta["inference_enabled"]` and `frame.meta["mode"]`.
+
+---
 
 ## Frame
 
-`Frame` is a mutable per-frame workspace. It holds:
+`Frame` is the mutable per-frame workspace. One instance travels through the entire
+pipeline. Every component shares it.
 
-- `idx`: Monotonically increasing frame counter
-- `ts`: Wall-clock capture timestamp
-- `slots`: Dict of tensor data (GPU/CPU tensors)
-- `meta`: Dict of CPU-side metadata (scalars, strings, dicts)
+```python
+frame.idx    # int   — monotonically increasing counter (dropped frames not counted)
+frame.ts     # float — time.monotonic() timestamp at capture
+frame.slots  # dict  — named tensor data (torch.Tensor, GPU or CPU)
+frame.meta   # dict  — CPU-side metadata: scalars, strings, lists, dicts
+```
 
-Components read from `frame.slots` and `frame.meta`, then write their outputs to the same dicts.
+### slots vs meta
 
-### Why __slots__?
+| | `frame.slots` | `frame.meta` |
+|---|---|---|
+| Holds | `torch.Tensor` | Any Python object |
+| Lives on | GPU or CPU | CPU only |
+| Typical use | Images, feature maps, bounding box tensors | Flags, counts, detection lists, routing strings |
+| Examples | `frame_bgr` (H×W×3), `boxes_xyxy` (N×4) | `detection_count`, `mode`, `fps` |
 
-`Frame` uses `__slots__` to reduce per-instance memory overhead. Frames are created at camera frame-rate (25–60 Hz); avoiding `__dict__` saves ~200 bytes per instance.
+Use `slots` for tensors. Use `meta` for everything else.
+
+### Source payload injection
+
+The Scheduler calls `source.next()`, takes the returned payload, and injects it into
+`frame.slots["frame_raw"]` (unless the payload is a dict, in which case it is merged
+into `frame.meta`). The first component in the pipeline reads `frame.slots["frame_raw"]`
+and converts it to whatever format downstream components expect.
+
+### FrameResult extraction
+
+After all components run, the Scheduler calls `_extract_result(frame)` and pushes a
+`FrameResult` to the `ResultBus`. It reads three keys from `frame.meta`:
+
+```python
+frame.meta["jpeg_bytes"]   # bytes  — JPEG-encoded frame for streaming
+frame.meta["detections"]   # list   — per-detection dicts
+frame.meta["result_meta"]  # dict   — FPS, mode, flags — goes into FrameResult.meta
+```
+
+The terminal component (typically a `ResultAssembler`) is responsible for writing these
+keys. If they are absent, `FrameResult` is returned with empty defaults.
+
+---
 
 ## SlotSchema
 
-`SlotSchema` describes a named data slot:
+`SlotSchema` is how components advertise their data contracts. Each schema describes one
+named slot:
 
 ```python
+from cvpipe import SlotSchema
+import torch
+
 SlotSchema(
-    name="proposals_xyxy",      # noun_coordsystem convention
-    dtype=torch.float32,        # torch.dtype for slots, Python type for meta
-    shape=(None, 4),            # None for variable dimensions
-    device="gpu",               # "gpu", "cpu", or "any"
-    coord_system="xyxy",        # for validation
-    description="...",
+    name="boxes_xyxy",         # noun_coordsystem naming convention
+    dtype=torch.float32,
+    shape=(None, 4),           # None = variable-length dimension
+    device="gpu",
+    coord_system="xyxy",       # validated against any consumer that reads this slot
+    description="Detected bounding boxes in absolute pixel coords, xyxy format",
 )
 ```
 
-### Slot Naming Convention
+Components declare `INPUTS` and `OUTPUTS` as lists of `SlotSchema`. `pipeline.validate()`
+checks the full graph before any model loads:
 
-Use `noun_coordsystem` format:
-- `proposals_xyxy` — region proposals in absolute xyxy coords
-- `embeddings_cls` — CLS token embeddings
-- `frame_bgr` — raw BGR frame
+- Every `INPUTS` slot must have exactly one upstream `OUTPUTS` writer
+- No two components can write to the same slot name
+- Coordinate systems must match between writer and reader
 
-### Slots vs Meta
+**Important:** `frame.slots["frame_raw"]` is injected by the Scheduler from the source
+payload. It is not produced by any component. Do **not** declare it in `INPUTS` — the
+validator will look for an upstream component that produces it and find none.
 
-| Property | slots | meta |
-|----------|-------|------|
-| Data type | torch.Tensor | Python types (int, str, dict) |
-| Device | GPU or CPU | CPU only |
-| Use for | Large tensors | Small scalars, strings, routing decisions |
+---
 
-## Component Lifecycle
+## Component lifecycle
 
-1. `__init__()` — called at pipeline assembly time
-2. `setup()` — called once before the frame loop starts
-3. `process(frame)` — called for each frame (hot path)
-4. `teardown()` — called once after the pipeline stops
+```
+pipeline.start()
+    |
+    +-- setup()        <- load models, open devices, allocate buffers
+    |                     called once on every component, in pipeline order
+    |
+    |   +-- frame loop -----------------------------------------------+
+    |   |   process(frame)    <- streaming thread, every frame        |
+    |   |   on_event(event)   <- event thread, when events arrive     |
+    |   +-------------------------------------------------------------+
+    |
+    +-- teardown()     <- release GPU memory, close files and devices
+                          called in reverse pipeline order
 
-### Thread Guarantees
+pipeline.reset()
+    +-- reset()        <- clear per-session state, keep models loaded
+                          Scheduler is paused before any reset() call
+```
 
-- `process()` runs only in the streaming thread
-- `on_event()` runs only in the event dispatch thread
-- These two threads share component state — use `self._lock` to protect shared mutable state
+**`setup()` vs `__init__()`:** store config and set attributes to `None` in `__init__`.
+Load models and open devices in `setup()`. This keeps pipeline construction fast and
+lets the framework sequence expensive initialisation correctly.
+
+---
+
+## Thread model
+
+```
+Main thread              Event dispatch thread        Streaming thread
+----------------         ---------------------        ----------------
+Your application         EventBus loop                Scheduler frame loop
+HTTP/WebSocket           calls on_event()             calls source.next()
+pipeline.reset()                                      calls process()
+```
+
+**`process()` and `on_event()` run on different threads.** Protect shared mutable state
+with `self._lock`. The right pattern is snapshot → release → work:
+
+```python
+def on_event(self, event):
+    if isinstance(event, ConfidenceChangedEvent):
+        with self._lock:
+            self._confidence = event.value   # fast write, release immediately
+
+def process(self, frame: Frame) -> None:
+    with self._lock:
+        confidence = self._confidence        # snapshot — fast, release immediately
+    # model inference happens outside the lock
+    results = self._model(frame.slots["frame_bgr"], conf=confidence)
+```
+
+Holding the lock during model inference would block event dispatch for the entire forward
+pass duration. Always snapshot, then release, then do the work.
+
+`reset()` is different: the Scheduler is paused before any `reset()` call, so `process()`
+is guaranteed not to run concurrently. Acquire `self._lock` in `reset()` only if the
+state is also touched by `on_event()`.
+
+---
 
 ## EventBus vs ResultBus
 
-| Bus | Purpose | Frequency | Blocking |
-|-----|---------|-----------|----------|
-| EventBus | Management signals, errors, state changes | Low (seconds) | Non-blocking |
-| ResultBus | Per-frame inference results | High (25–60 Hz) | Lossy ring buffer |
+| | EventBus | ResultBus |
+|---|---|---|
+| **Purpose** | Management signals | Per-frame results |
+| **Typical content** | "Set confidence to 0.6", "Reload model" | JPEG bytes, detection list, FPS |
+| **Frequency** | Seconds between events | Every frame (25–60 Hz) |
+| **Delivery** | Ordered, best-effort | Lossy ring buffer — drops oldest under backpressure |
 
-## The Two-Thread Model
+The ResultBus is lossy by design. A live video stream doesn't need every frame to reach
+the WebSocket client — it needs the most recent one. Dropping frames under load is a
+feature.
 
-| Thread | Owner | Responsibility |
-|--------|-------|----------------|
-| Streaming | Scheduler | Frame loop: pull frame → run components → push result |
-| Event dispatch | EventBus | Dequeue events → call subscriber handlers |
-| Main | Application | FastAPI server, HTTP/WebSocket |
+---
 
-## Error Containment
+## Error containment
 
-When a component raises an exception in `process()`:
+When a component raises during `process()`, the Scheduler catches the exception,
+emits `ComponentErrorEvent` and `FrameDroppedEvent(reason="component_error")`, discards
+the frame, and continues the frame loop. One bad frame never stops the pipeline.
 
-1. The Scheduler catches the exception
-2. Emits `ComponentErrorEvent` with details
-3. Emits `FrameDroppedEvent(reason="component_error")`
-4. Continues the frame loop with the next frame
+---
 
-The pipeline never crashes due to a bad component.
-
-## → Next Steps
+## Next Steps
 
 - [Building Components](./building_components.md) — Implement your first component
-- [Building Pipelines](./building_pipelines.md) — Configure pipeline YAML
-- [Observability](./observability.md) — Monitor pipeline health
+- [Building Pipelines](./building_pipelines.md) — Configure topology in YAML
+- [Observability](./observability.md) — Probes, metrics, event monitoring

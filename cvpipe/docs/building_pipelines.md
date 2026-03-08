@@ -1,299 +1,376 @@
 # Building Pipelines
 
-This guide explains how to configure and run cvpipe pipelines.
+A pipeline has three parts: a **source** that produces frames, **components** that process
+them in order, and optional **branches** for conditional routing.
 
-## YAML Structure
+---
+
+## YAML structure
 
 ```yaml
 pipeline:
-  source: camera_source       # FrameSource module name
-  source_config:              # optional: params passed to source
+  source: webcam_source           # FrameSource module name (dir under components/)
+  source_config:                  # optional — passed as kwargs to source constructor
     device_index: 0
 
-  components:                 # list of components in execution order
-    - module: frcnn_proposer # module name (directory name)
-      id: proposer           # unique component ID
-      config:                # optional: constructor kwargs
+  components:                     # main execution path, in order
+    - module: preprocessor        # component directory name
+      id: prep                    # unique ID — used in branches, pipeline.component(), logs
+      config:                     # optional — passed as kwargs to component constructor
+        device: cuda
+
+    - module: faster_rcnn_detector
+      id: detector
+      config:
+        weights: checkpoints/frcnn.pth
         confidence: 0.5
-        nms_iou: 0.45
 
-    - module: dino_embedder
-      id: embedder
-
-  connections:                # optional: explicit connections
-    embedder: [proposer]    # embedder reads from proposer outputs
-
-  branches:                   # optional: conditional branches
-    - id: scan_branch
-      trigger: "routing_decision == 'scan'"
-      inject_after: router
-      merge_before: tracker
-      components:
-        - module: scan_proposer
-          id: scan_proposer
-```
-
-## Auto-Inference of Connections
-
-If you omit `connections`, cvpipe infers them automatically:
-
-1. For each component input slot, find the most recent upstream component that produces it
-2. Use that connection automatically
-
-Example: If `Proposer` outputs `proposals_xyxy` and `Embedder` inputs `proposals_xyxy`, they're automatically connected.
-
-## When to Use Explicit Connections
-
-Use explicit connections when:
-- Multiple components produce the same slot name
-- You want non-linear data flow
-- The auto-inference doesn't match your intent
-
-## Component Discovery
-
-cvpipe discovers components from a directory:
-
-```python
-from cvpipe import ComponentRegistry
-
-registry = ComponentRegistry()
-registry.discover(Path("detector/components/"))
-```
-
-Each subdirectory with an `__init__.py` that exports exactly one `Component` subclass becomes available by its directory name.
-
-## Validation
-
-Call `pipeline.validate()` to check for errors:
-
-```python
-pipeline = Pipeline(source=source, components=[...])
-pipeline.validate()  # raises PipelineConfigError if invalid
-```
-
-Validation checks:
-- Duplicate slot writers (two components output same slot)
-- Missing input slots (component requires slot no one produces)
-- Coordinate system mismatches
-- Invalid component IDs
-
-## Pipeline Lifecycle
-
-```python
-pipeline = Pipeline(
-    source=my_source,
-    components=[comp_a, comp_b],
-)
-
-pipeline.validate()   # check for errors
-pipeline.start()      # starts all threads
-# ... pipeline runs ...
-pipeline.stop()       # stops all threads
-```
-
-### What happens on start()
-
-1. Validates if not already validated
-2. Injects `_component_id` and `_event_bus` into each component
-3. Calls `setup()` on each component
-4. Wires EventBus subscriptions
-5. Starts EventBus and ResultBus threads
-6. Creates and starts Scheduler
-
-### What happens on stop()
-
-1. Emits `PipelineStateEvent("stopping")`
-2. Stops Scheduler (waits for current frame)
-3. Calls `teardown()` on each component in reverse order
-4. Stops ResultBus and EventBus threads
-5. Emits `PipelineStateEvent("stopped")`
-
-## Accessing result_bus and event_bus
-
-```python
-pipeline = Pipeline(...)
-
-# Subscribe to events
-pipeline.event_bus.subscribe(ComponentErrorEvent, my_handler)
-
-# Get results
-pipeline.result_bus.subscribe(my_result_handler)
-
-pipeline.start()
-```
-
-## Resetting the Pipeline
-
-The `pipeline.reset()` method resets all component state without stopping the pipeline. This is useful for:
-
-- **Session switching**: When switching between different detection classes or calibration data
-- **Calibration updates**: After updating calibration parameters, reset to apply them
-- **State recovery**: When a component's internal state becomes inconsistent
-
-### How reset() Works
-
-1. Pauses the Scheduler (waits for current frame to complete)
-2. Calls `reset()` on each component in topological order
-3. Resumes the Scheduler
-4. Emits `PipelineStateEvent(state="reset")`
-
-```python
-pipeline = Pipeline(...)
-
-# At runtime, trigger a reset (e.g., when calibration changes)
-pipeline.reset()  # All components reset their internal state
-
-# Pipeline continues running without interruption
-```
-
-### Thread Safety
-
-- `reset()` is called from the main/API thread
-- The Scheduler is paused before any component's `reset()` is called
-- `process()` is guaranteed not to run concurrently with any `reset()` call
-- `on_event()` may still be called during reset (EventBus continues running)
-- If a component's `reset()` accesses state also accessed by `on_event()`, it must acquire `self._lock`
-
-## Accessing Components
-
-Use `pipeline.component(id)` to retrieve a component instance by its ID:
-
-```python
-pipeline = Pipeline(...)
-
-# Access a specific component
-embedder = pipeline.component("embedder")
-
-# Call methods directly (outside of process() or on_event())
-result = embedder.embed_images(images)
-```
-
-### When to Use component()
-
-- **Dependency injection**: Pass component instances to other components during construction
-- **Service methods**: Call non-process methods on components (e.g., `embed_images()`, `reload_model()`)
-- **Testing**: Access component state for assertions
-
-### Accessing Branch Components
-
-The `component()` method also searches branch components:
-
-```python
-# Get a component from an exclusive branch
-scan_proposer = pipeline.component("scan_proposer")
-scan_proposer.reload_model("/new/model.onnx")
-```
-
-## Branches
-
-Branches are conditional sub-pipelines that run only when a trigger condition is met. They allow the same pipeline to handle multiple modes (e.g., "scan" vs "track").
-
-### Branch Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique branch identifier |
-| `trigger` | string | Python expression evaluated against `frame.meta` |
-| `inject_after` | string | Component ID after which branch starts |
-| `merge_before` | string | Component ID before which branch merges |
-| `components` | list | Components that run when trigger is true |
-
-### How Branches Work
-
-1. **inject_after**: The branch receives the Frame state after this component runs
-2. **trigger**: A Python expression evaluated with `frame.meta` as local variables
-3. **merge_before**: The branch's outputs are available to this component onward
-
-### Example
-
-```yaml
-pipeline:
-  source: camera_source
-  components:
-    - module: router
-      id: router
     - module: tracker
       id: tracker
-      
-  branches:
-    - id: scan_branch
-      trigger: "routing_decision == 'scan'"
-      inject_after: router
-      merge_before: tracker
-      components:
-        - module: scan_proposer
-          id: scan_proposer
-```
 
-When `frame.meta["routing_decision"] == "scan"`, the `scan_proposer` runs between `router` and `tracker`.
+    - module: result_assembler
+      id: assembler
 
-## Exclusive Branches
-
-Exclusive branches are a structural if/else — when the trigger is true, the main-path components between `inject_after` and `merge_before` are **skipped entirely** and the branch components run instead.
-
-### When to Use Exclusive Branches
-
-- When you want to skip a segment of the pipeline based on a condition
-- When adding guard clauses to every component becomes tedious
-- When you want the routing logic visible in the YAML topology
-
-### Exclusive Branch Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `exclusive` | bool | If `true`, branch is exclusive (default: `false`) |
-
-### Example
-
-```yaml
-pipeline:
-  source: camera_source
-  components:
-    - module: preprocessor
-      id: prep
-    - module: heavy_detector
-      id: heavy
-    - module: tracker
-      id: tracker
-      
-  branches:
-    - id: fast_path
-      trigger: "use_fast == True"
+  branches:                       # optional
+    - id: fast_mode
+      trigger: "mode == 'fast'"
       inject_after: prep
       merge_before: tracker
       exclusive: true
       components:
-        - module: lightweight_detector
-          id: fast
+        - module: yolo_detector
+          id: fast_det
+          config: {weights: yolov8n.pt, confidence: 0.3}
 ```
 
-When `frame.meta["use_fast"]` is `True`:
-- `prep` runs
-- `heavy` is **skipped**
-- `fast` runs
-- `tracker` runs
+---
 
-When `frame.meta["use_fast"]` is `False`:
-- `prep` runs
-- `heavy` runs
-- `fast` is **skipped**
-- `tracker` runs
+## Building with cvpipe.build()
 
-### Empty Exclusive Branch
+The standard way to assemble a pipeline. `build()` handles discovery, construction, and
+wiring from a single call:
 
-An exclusive branch with an empty `components` list skips the covered segment entirely:
+```python
+from cvpipe import build
+from pathlib import Path
+
+pipeline = build(
+    config_path=Path("pipeline.yaml"),
+    components_dir=Path("myapp/"),
+)
+pipeline.validate()
+pipeline.start()
+```
+
+`build()` discovers all `Component` and `FrameSource` subclasses from every subdirectory
+under `components_dir` that contains an `__init__.py`. Directory name becomes registry
+key. Instantiates each with the `config` dict from YAML. Returns a ready-to-validate
+`Pipeline`.
+
+The `components_dir` argument is the root of your project's component and source trees.
+Discovery walks all subdirectories, so the conventional layout works without any
+additional configuration:
+
+```
+myapp/
+└── components/
+   ├── preprocessor/__init__.py
+   ├── faster_rcnn_detector/__init__.py
+   └── tracker/__init__.py
+   └── webcam_source/__init__.py
+```
+
+---
+
+## Manual construction (advanced)
+
+When you need post-construction dependency injection — sharing live Python objects
+between components that cannot be expressed in YAML — you build the pipeline manually:
+
+```python
+from cvpipe import Pipeline, ComponentRegistry
+from cvpipe.config import PipelineConfig
+from pathlib import Path
+
+registry = ComponentRegistry()
+registry.discover(Path("myapp/components/"))
+registry.discover(Path("myapp/sources/"))
+
+config = PipelineConfig.from_yaml(Path("pipeline.yaml"))
+
+# Instantiate main-path components
+components = []
+for spec in config.components:
+    cls  = registry.get(spec.module)
+    comp = cls(**spec.config)
+    comp._component_id = spec.id
+    components.append(comp)
+
+# Instantiate branch components
+branch_components = {}
+for branch_spec in config.branches:
+    b_comps = []
+    for spec in branch_spec.components:
+        cls  = registry.get(spec.module)
+        comp = cls(**spec.config)
+        comp._component_id = spec.id
+        b_comps.append(comp)
+    branch_components[branch_spec.id] = b_comps
+
+# Instantiate source from registry
+source = registry.get_source(config.source)(**config.source_config)
+
+pipeline = Pipeline(
+    source=source,
+    components=components,
+    connections=config.connections,
+    branches=config.branches,
+    branch_components=branch_components,
+)
+
+# Post-construction dependency injection — shared live objects
+scorer  = pipeline.component("scorer")
+tracker = pipeline.component("tracker")
+scorer._shared_registry = my_registry_object   # cannot be expressed in YAML
+scorer._db = db_connection
+
+pipeline.validate()
+pipeline.start()
+```
+
+This pattern (manual construction + post-construction injection) lives in a
+`pipeline_factory.py` function in your project.
+
+---
+
+## Validation
+
+Always call `validate()` before `start()`:
+
+```python
+pipeline.validate()   # raises PipelineConfigError listing every issue found
+pipeline.start()
+```
+
+`start()` validates automatically if you haven't, but explicit validation surfaces errors
+at assembly time — before seconds of model loading have begun.
+
+What validation checks:
+- A component requires a slot that no upstream component produces
+- Two components declare the same slot name in `OUTPUTS`
+- Writer and reader declare different coordinate systems for the same slot
+- Branch `inject_after` or `merge_before` IDs that don't exist in the component list
+- Exclusive branch ranges that partially overlap
+
+---
+
+## Pipeline lifecycle
+
+```python
+pipeline = Pipeline(source=source, components=[prep, detector, tracker])
+
+pipeline.validate()
+pipeline.start()    # setup() on source then all components, then starts frame loop
+
+# ... pipeline is running ...
+
+pipeline.stop()     # waits for current frame, then teardown() in reverse order
+```
+
+**`start()` sequence:**
+1. Validates (skips if already validated)
+2. Injects `_component_id` and `_event_bus` into every component
+3. Wires `EventBus` subscriptions from each component's `SUBSCRIBES` list
+4. Starts `EventBus` and `ResultBus` threads
+5. Calls `source.setup()`, then `setup()` on each component in pipeline order
+6. Creates `Scheduler` and starts the streaming thread
+7. Emits `PipelineStateEvent(state="running")`
+
+**`stop()` sequence:**
+1. Emits `PipelineStateEvent(state="stopping")`
+2. Stops the Scheduler (waits for the current frame to finish)
+3. Calls `teardown()` on each component in reverse order, then `source.teardown()`
+4. Stops `ResultBus` and `EventBus` threads
+5. Emits `PipelineStateEvent(state="stopped")`
+
+---
+
+## Resetting the pipeline
+
+`pipeline.reset()` resets all component state without stopping the pipeline:
+
+```python
+pipeline.reset()    # pauses Scheduler, calls reset() on all components, resumes
+```
+
+**`reset()` sequence:**
+1. Pauses the Scheduler (waits for the current frame to complete)
+2. Calls `reset()` on each component in topological order
+3. Resumes the Scheduler
+4. Emits `PipelineStateEvent(state="reset")`
+
+The EventBus keeps running during reset, so `on_event()` can still fire. If a
+component's `reset()` accesses state also touched by `on_event()`, acquire `self._lock`.
+
+---
+
+## Subscribing to results and events
+
+Subscribe to events **before calling `start()`** — the buses start when the pipeline
+does, and subscriptions added after have a small window where events can be missed.
+
+```python
+pipeline = Pipeline(source=source, components=[...])
+
+# High-frequency per-frame results
+pipeline.result_bus.subscribe(lambda result: queue.put(result))
+
+# Pipeline lifecycle events
+pipeline.event_bus.subscribe(PipelineStateEvent,
+                              lambda e: logger.info("state: %s", e.state))
+pipeline.event_bus.subscribe(ComponentErrorEvent,
+                              lambda e: logger.error("%s: %s", e.component_id, e.message))
+
+pipeline.start()
+```
+
+For async applications, use `AsyncQueueBridge` — see [Observability](./observability.md).
+
+---
+
+## Accessing a component at runtime
+
+`pipeline.component(id)` retrieves any live component by its YAML ID. Searches main-path
+and branch components:
+
+```python
+# Post-construction dependency injection
+scorer = pipeline.component("scorer")
+scorer._shared_registry = my_registry   # inject a live object after construction
+
+# Call a service method from the API layer (outside process())
+classifier = pipeline.component("classifier")
+embedding  = classifier.encode_query_image(query_image)  # call from a thread pool
+```
+
+---
+
+## Branches
+
+A branch is a conditional sub-pipeline. The trigger is a Python expression evaluated
+against `frame.meta`:
 
 ```yaml
 branches:
-  - id: skip_heavy
-    trigger: "skip_heavy_processing == True"
-    inject_after: prep
+  - id: nighttime
+    trigger: "illumination < 50"
+    inject_after: preprocessor
     merge_before: tracker
-    exclusive: true
-    components: []  # nothing runs, just skip the segment
+    components:
+      - module: low_light_enhancer
+        id: enhancer
 ```
 
-## → Next Steps
+When `frame.meta["illumination"] < 50`, `low_light_enhancer` runs between `preprocessor`
+and `tracker`. When 50 or above, the main-path components in that range run instead.
+
+If the key doesn't exist in `frame.meta` when the trigger evaluates, the trigger returns
+`False` and the main path runs — no exception.
+
+### Exclusive branches
+
+A regular branch is **additive** — branch components run in addition to the main path.
+An **exclusive** branch is an **if/else** — when the trigger fires, main-path components
+in the covered range are skipped entirely:
+
+```yaml
+branches:
+  - id: inference_paused
+    trigger: "inference_enabled == False"
+    inject_after: preprocessor
+    merge_before: assembler
+    exclusive: true
+    components:
+      - module: passthrough_marker
+        id: passthrough
+```
+
+When `inference_enabled` is `False`: `preprocessor` runs, `passthrough` runs, `assembler`
+runs — everything between `preprocessor` and `assembler` is skipped.
+
+An exclusive branch with an empty `components` list simply skips the covered segment:
+
+```yaml
+- id: skip_segment
+  trigger: "skip == True"
+  inject_after: prep
+  merge_before: assembler
+  exclusive: true
+  components: []
+```
+
+### Nested branches
+
+Branches can nest as long as one range is fully inside the other. Partial overlap is a
+validation error. The typical pattern: outer branch disables all inference, inner branch
+selects between detectors:
+
+```yaml
+branches:
+  - id: inference_off
+    trigger: "not inference_enabled"
+    inject_after: preprocessor
+    merge_before: assembler
+    exclusive: true
+    components:
+      - module: passthrough_marker
+        id: passthrough
+
+  - id: fast_mode
+    trigger: "mode == 'fast'"
+    inject_after: preprocessor
+    merge_before: tracker
+    exclusive: true
+    components:
+      - module: yolo_detector
+        id: fast_det
+```
+
+### Writing trigger keys
+
+The trigger key must be in `frame.meta` before the branch point (`inject_after`).
+Write it in a component that runs earlier in the pipeline:
+
+```python
+# In Preprocessor.process():
+frame.meta["inference_enabled"] = self._inference_enabled
+frame.meta["mode"] = "fast" if self._fast_mode else "full"
+```
+
+Keep trigger expressions simple — one key, one condition. If the logic is complex, put it
+in a dedicated routing component and write a single decision string to `frame.meta`.
+
+---
+
+## Recommendations
+
+**Validate explicitly.** Call `pipeline.validate()` before `start()` so errors surface
+before model loading begins.
+
+**Use `build()` for standard pipelines.** Manual construction is only needed for
+post-construction dependency injection of live Python objects.
+
+**Swapping models means swapping modules.** To replace Faster R-CNN with YOLOv8, change
+`module: faster_rcnn_detector` to `module: yolo_detector` in `pipeline.yaml`. The
+tracker, assembler, and server are unchanged. This is the payoff of typed slot contracts.
+
+**Stable component IDs matter.** IDs appear in `inject_after`, `merge_before`,
+`pipeline.component()`, logs, and metrics. Once assigned, changing an ID means updating
+everything that references it.
+
+---
+
+## Next Steps
 
 - [Observability](./observability.md) — Monitor pipeline health
-- [API Reference](./api_reference.md) — Complete API docs
+- [API Reference](./api_reference.md) — Complete reference for Pipeline, Registry, and config
