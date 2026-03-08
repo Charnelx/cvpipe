@@ -1,0 +1,13 @@
+FROM python:3.13-slim
+
+WORKDIR /app
+
+RUN pip install pytest pytest-cov pyyaml pytest-asyncio ruff
+
+COPY pyproject.toml ./
+COPY cvpipe/ ./cvpipe/
+COPY tests/ ./tests/
+
+ENV PYTHONPATH=/app:$PYTHONPATH
+
+CMD ["pytest", "tests/cvpipe/", "-v", "--cov=cvpipe", "--cov-report=term-missing", "--cov-fail-under=80"]
