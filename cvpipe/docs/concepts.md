@@ -29,8 +29,8 @@ a segment of the main path is bypassed and alternative components run instead.
 ```
                          true
 [Preprocessor] --(mode='fast')?---------> [LightweightDetector] --------+
-                         |                                               |
-                         | false                                         v
+                         |                                              |
+                         | false                                        v
                          +-----------> [FasterRCNN] --> [Classifier] ---+
                                                                         |
                                                                    [Tracker]
@@ -49,16 +49,16 @@ between detector variants:
 [Preprocessor]
       |
       +-- inference_enabled=False --> [PassthroughMarker] -----------------+
-      |                                                                     |
+      |                                                                    |
       +-- inference_enabled=True                                           |
                   |                                                        |
                   +-- mode='fast' --> [LightweightDetector] -------+       |
                   |                                                |       |
                   +-- mode='full' --> [FasterRCNN] --> [Classifier]+       |
-                                                           |               |
-                                                      [Tracker]            |
-                                                           |               |
-                                                [ResultAssembler] <--------+
+                                                            |              |
+                                                        [Tracker]          |
+                                                            |              |
+                                                     [ResultAssembler] <---+
 ```
 
 Both branch conditions are YAML declarations. `Preprocessor` writes both
