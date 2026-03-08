@@ -38,4 +38,5 @@ def build(config_path: Path, components_dir: Path) -> Pipeline:
         connections=config.connections,
         branches=config.branches,
         branch_components=branch_components,
+        validation_mode=config.validation.mode,
     )

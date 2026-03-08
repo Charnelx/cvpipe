@@ -9,14 +9,14 @@ them in order, and optional **branches** for conditional routing.
 
 ```yaml
 pipeline:
-  source: webcam_source           # FrameSource module name (dir under components/)
-  source_config:                  # optional — passed as kwargs to source constructor
+  source: webcam_source # FrameSource module name (dir under components/)
+  source_config: # optional — passed as kwargs to source constructor
     device_index: 0
 
-  components:                     # main execution path, in order
-    - module: preprocessor        # component directory name
-      id: prep                    # unique ID — used in branches, pipeline.component(), logs
-      config:                     # optional — passed as kwargs to component constructor
+  components: # main execution path, in order
+    - module: preprocessor # component directory name
+      id: prep # unique ID — used in branches, pipeline.component(), logs
+      config: # optional — passed as kwargs to component constructor
         device: cuda
 
     - module: faster_rcnn_detector
@@ -31,7 +31,7 @@ pipeline:
     - module: result_assembler
       id: assembler
 
-  branches:                       # optional
+  branches: # optional
     - id: fast_mode
       trigger: "mode == 'fast'"
       inject_after: prep
@@ -41,6 +41,9 @@ pipeline:
         - module: yolo_detector
           id: fast_det
           config: {weights: yolov8n.pt, confidence: 0.3}
+
+  validation: # optional — runtime slot validation
+    mode: warn  # "off" | "warn" | "strict"
 ```
 
 ---

@@ -24,6 +24,7 @@ from .errors import (
     ComponentError,
     ComponentNotFoundError,
     AmbiguousComponentError,
+    SlotValidationError,
 )
 from .frame import Frame, SlotSchema
 from .probe import Probe, DiagnosticsProbe, FrameDiagnostics, ComponentTrace
@@ -64,4 +65,5 @@ __all__ = [
     "ComponentError",
     "ComponentNotFoundError",
     "AmbiguousComponentError",
+    "SlotValidationError",
 ]

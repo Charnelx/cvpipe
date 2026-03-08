@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from .bus import ResultBus
 from .component import Component
@@ -51,6 +52,7 @@ class Pipeline:
         connections: dict[str, list[str]] | None = None,
         branches: list[BranchSpec] | None = None,
         branch_components: dict[str, list[Component]] | None = None,
+        validation_mode: Literal["off", "warn", "strict"] = "warn",
     ) -> None:
         self._source = source
         self._components = list(components)
@@ -61,6 +63,7 @@ class Pipeline:
         self._branch_components = branch_components or {}
         self._scheduler: Scheduler | None = None
         self._validated = False
+        self._validation_mode = validation_mode
 
     @property
     def result_bus(self) -> ResultBus:
@@ -73,6 +76,31 @@ class Pipeline:
     @property
     def is_running(self) -> bool:
         return self._scheduler is not None and self._scheduler.is_running
+
+    def set_validation_mode(self, mode: Literal["off", "warn", "strict"]) -> None:
+        """
+        Change validation mode.
+
+        Must be called before start(). Cannot be changed while pipeline is running.
+
+        Parameters
+        ----------
+        mode : Literal["off", "warn", "strict"]
+            Validation mode:
+            - "off": No validation (production)
+            - "warn": Log warnings on mismatch (development, default)
+            - "strict": Raise SlotValidationError (testing)
+
+        Raises
+        ------
+        RuntimeError
+            If pipeline is already running.
+        """
+        if self._scheduler is not None and self._scheduler.is_running:
+            raise RuntimeError(
+                "Cannot change validation mode while pipeline is running"
+            )
+        self._validation_mode = mode
 
     def validate(self) -> None:
         """
@@ -94,7 +122,9 @@ class Pipeline:
         if errors:
             raise PipelineConfigError(errors)
         self._validated = True
-        logger.info("[Pipeline] Validation passed (%d components)", len(self._components))
+        logger.info(
+            "[Pipeline] Validation passed (%d components)", len(self._components)
+        )
 
     def start(self) -> None:
         """
@@ -154,8 +184,12 @@ class Pipeline:
             try:
                 comp.setup()
             except Exception as e:
-                logger.exception("[Pipeline] Component '%s' setup() failed", comp.component_id)
-                self._event_bus.publish(PipelineStateEvent(state="error", detail=str(e)))
+                logger.exception(
+                    "[Pipeline] Component '%s' setup() failed", comp.component_id
+                )
+                self._event_bus.publish(
+                    PipelineStateEvent(state="error", detail=str(e))
+                )
                 raise
 
         for branch_id, branch_comps in self._branch_components.items():
@@ -167,7 +201,9 @@ class Pipeline:
                         "[Pipeline] Branch component '%s' setup() failed",
                         comp.component_id,
                     )
-                    self._event_bus.publish(PipelineStateEvent(state="error", detail=str(e)))
+                    self._event_bus.publish(
+                        PipelineStateEvent(state="error", detail=str(e))
+                    )
                     raise
 
         segments = self._build_execution_plan()
@@ -177,7 +213,17 @@ class Pipeline:
             segments=segments,
             result_bus=self._result_bus,
             event_bus=self._event_bus,
+            validation_mode=self._validation_mode,
         )
+
+        if self._validation_mode != "off":
+            logger.warning(
+                "[Pipeline] Runtime slot validation enabled (mode=%s). "
+                "This adds ~0.5 µs overhead per slot write. "
+                "Disable in production for best performance.",
+                self._validation_mode,
+            )
+
         self._scheduler.start()
         self._event_bus.publish(PipelineStateEvent(state="running"))
         logger.info("[Pipeline] Started — %d components", len(self._components))
@@ -203,7 +249,9 @@ class Pipeline:
             try:
                 comp.teardown()
             except Exception:
-                logger.exception("[Pipeline] Component '%s' teardown() failed", comp.component_id)
+                logger.exception(
+                    "[Pipeline] Component '%s' teardown() failed", comp.component_id
+                )
 
         for branch_id, branch_comps in self._branch_components.items():
             for comp in reversed(branch_comps):
@@ -284,7 +332,9 @@ class Pipeline:
         total_components = len(self._components) + sum(
             len(c) for c in self._branch_components.values()
         )
-        logger.info("[Pipeline] reset() complete — %d components reset", total_components)
+        logger.info(
+            "[Pipeline] reset() complete — %d components reset", total_components
+        )
 
     def _build_execution_plan(self) -> list[ExecutionSegment]:
         """
@@ -361,7 +411,9 @@ class Pipeline:
         current_idx = start
 
         branches_in_range = [
-            (inj, mrg, exc) for inj, mrg, exc in branch_info_list if inj >= start and mrg <= end
+            (inj, mrg, exc)
+            for inj, mrg, exc in branch_info_list
+            if inj >= start and mrg <= end
         ]
 
         branches_in_range.sort(key=lambda x: x[0])
@@ -369,7 +421,9 @@ class Pipeline:
         for inject_idx, merge_idx, exclusive in branches_in_range:
             if current_idx <= inject_idx:
                 segments.append(
-                    ExecutionSegment(components=self._components[current_idx: inject_idx + 1])
+                    ExecutionSegment(
+                        components=self._components[current_idx : inject_idx + 1]
+                    )
                 )
 
             inner_branches = [
@@ -379,7 +433,9 @@ class Pipeline:
             ]
 
             if inner_branches:
-                inner_segments = self._partition_range(inject_idx + 1, merge_idx, branch_info_list)
+                inner_segments = self._partition_range(
+                    inject_idx + 1, merge_idx, branch_info_list
+                )
                 segments.append(
                     ExecutionSegment(
                         components=[],
@@ -398,7 +454,9 @@ class Pipeline:
             current_idx = merge_idx
 
         if current_idx < end:
-            segments.append(ExecutionSegment(components=self._components[current_idx:end]))
+            segments.append(
+                ExecutionSegment(components=self._components[current_idx:end])
+            )
 
         return segments
 
@@ -444,7 +502,9 @@ class Pipeline:
                 upstream_id, upstream_schema = upstream_outputs[input_schema.name]
                 compat_errors = upstream_schema.compatible_with(input_schema)
                 for ce in compat_errors:
-                    errors.append(f"Contract error between '{upstream_id}' → '{cid}': {ce}")
+                    errors.append(
+                        f"Contract error between '{upstream_id}' → '{cid}': {ce}"
+                    )
 
         exclusive_branches = [b for b in self._branches if b.exclusive]
         component_ids = {self._get_component_id(c) for c in self._components}

@@ -3,11 +3,13 @@ FROM python:3.13-slim
 WORKDIR /app
 
 RUN pip install pytest pytest-cov pyyaml pytest-asyncio ruff
+RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 COPY pyproject.toml ./
 COPY cvpipe/ ./cvpipe/
 COPY tests/ ./tests/
+COPY benchmarks/ ./benchmarks
 
-ENV PYTHONPATH=/app:$PYTHONPATH
+ENV PYTHONPATH=/app
 
 CMD ["pytest", "tests/cvpipe/", "-v", "--cov=cvpipe", "--cov-report=term-missing", "--cov-fail-under=80"]

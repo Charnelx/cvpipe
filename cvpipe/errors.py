@@ -35,7 +35,9 @@ class PipelineConfigError(CvPipeError):
     def __init__(self, errors: list[str]) -> None:
         self.errors = errors
         bullet_list = "\n".join(f"  • {e}" for e in errors)
-        super().__init__(f"Pipeline has {len(errors)} configuration error(s):\n{bullet_list}")
+        super().__init__(
+            f"Pipeline has {len(errors)} configuration error(s):\n{bullet_list}"
+        )
 
 
 class ContractError(PipelineConfigError):
@@ -165,3 +167,25 @@ class AmbiguousComponentError(CvPipeError):
             f"Module '{module_name}' exports {len(found)} Component subclasses: "
             f"{found}. Each module must export exactly one Component subclass."
         )
+
+
+class SlotValidationError(CvPipeError):
+    """
+    Raised when slot validation fails in 'strict' mode.
+
+    Attributes
+    ----------
+    component_id : str
+        The component that wrote the invalid slot.
+    slot_name : str
+        The slot name that failed validation.
+    errors : list[str]
+        List of validation error messages.
+    """
+
+    def __init__(self, component_id: str, slot_name: str, errors: list[str]) -> None:
+        self.component_id = component_id
+        self.slot_name = slot_name
+        self.errors = errors
+        msg = f"[{component_id}] Slot '{slot_name}': " + "; ".join(errors)
+        super().__init__(msg)
