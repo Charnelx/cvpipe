@@ -11,5 +11,11 @@ dependencies = [
     "torch>=2.10.0"
 ]
 
+[project.optional-dependencies]
+dashboard = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+]
+
 [tool.setuptools.packages.find]
 where = ["."]

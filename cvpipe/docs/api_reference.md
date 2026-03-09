@@ -546,3 +546,111 @@ config = ValidationConfig(mode="warn")
 | Attribute | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `mode` | Literal["off", "warn", "strict"] | `"warn"` | Runtime slot validation mode |
+
+---
+
+## Dashboard
+
+The dashboard module provides real-time pipeline monitoring via HTTP endpoints.
+
+### enable_dashboard()
+
+```python
+from cvpipe.dashboard import enable_dashboard, DashboardConfig
+
+pipeline = build(config_path, components_dir)
+pipeline.validate()
+server = enable_dashboard(pipeline)
+pipeline.start()
+```
+
+**Signature:** `enable_dashboard(pipeline: Pipeline, config: DashboardConfig | None = None) -> DashboardServer | None`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `pipeline` | Pipeline | The pipeline to monitor |
+| `config` | DashboardConfig \| None | Dashboard configuration (uses defaults if None) |
+
+Returns `DashboardServer` instance or `None` if disabled or dependencies missing.
+
+### DashboardConfig
+
+```python
+from cvpipe.dashboard import DashboardConfig
+
+config = DashboardConfig(
+    enabled=True,
+    port=8881,
+    host="0.0.0.0",
+    prometheus=True,
+    websocket=True,
+    update_interval_ms=1000,
+    latency_window=300,
+    history_duration_minutes=5.0,
+    fps_alpha=0.1,
+    max_errors_per_component=10,
+)
+```
+
+| Attribute | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | bool | `True` | Enable/disable the dashboard |
+| `port` | int | `8881` | HTTP server port |
+| `host` | str | `"0.0.0.0"` | HTTP server bind address |
+| `prometheus` | bool | `True` | Enable `/metrics` Prometheus endpoint |
+| `websocket` | bool | `True` | Enable `/ws/metrics` WebSocket streaming |
+| `update_interval_ms` | int | `1000` | WebSocket update interval in milliseconds |
+| `latency_window` | int | `300` | Rolling window size for percentile calculation |
+| `history_duration_minutes` | float | `5.0` | Time series history duration |
+| `fps_alpha` | float | `0.1` | EMA smoothing factor for FPS (0 < alpha < 1) |
+| `max_errors_per_component` | int | `10` | Recent errors to keep per component |
+
+### MetricsCollector
+
+Collects metrics from pipeline events. Access via `pipeline._dashboard_collector` after `enable_dashboard()`.
+
+| Method | Description |
+|--------|-------------|
+| `on_component_metric(event)` | Handle ComponentMetricEvent |
+| `on_frame_dropped(event)` | Handle FrameDroppedEvent |
+| `on_component_error(event)` | Handle ComponentErrorEvent |
+| `on_pipeline_state(event)` | Handle PipelineStateEvent |
+| `register_custom_event(event_type, handler)` | Register custom telemetry handler |
+| `snapshot()` | Return thread-safe metrics snapshot |
+
+### Metrics Snapshot Format
+
+```python
+{
+    "latency": {
+        "detector": {
+            "p50_ms": 18.4,
+            "p95_ms": 22.1,
+            "p99_ms": 24.3,
+            "min_ms": 15.2,
+            "max_ms": 28.1,
+            "current_ms": 19.2,
+            "samples": 300
+        }
+    },
+    "latency_history": {
+        "detector": [{"ts": 1709925900, "latency_ms": 18.5, "samples": 30}, ...]
+    },
+    "drops": {
+        "total": 42,
+        "by_reason": {"backpressure": 30, "component_error": 12}
+    },
+    "errors": {
+        "total": 3,
+        "by_component": {"detector": 2, "tracker": 1},
+        "recent": [{"component_id": "detector", "message": "...", ...}]
+    },
+    "state": {
+        "status": "running",
+        "uptime_seconds": 3600,
+        "frame_count": 108000
+    },
+    "fps": {"current": 28.5, "target": 30},
+    "custom": {}
+}
+```

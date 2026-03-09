@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>cvpipe Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+        }
+        .header {
+            background: #16213e;
+            padding: 1rem 2rem;
+            border-bottom: 1px solid #0f3460;
+        }
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+        .header .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-left: 1rem;
+        }
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #4ade80;
+        }
+        .status-dot.stopped { background: #f87171; }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 1rem;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        .card {
+            background: #16213e;
+            border-radius: 8px;
+            padding: 1rem;
+            border: 1px solid #0f3460;
+        }
+        .card h2 {
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #94a3b8;
+            margin-bottom: 0.75rem;
+        }
+        .card .value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #4ade80;
+        }
+        .card .unit {
+            font-size: 0.875rem;
+            color: #64748b;
+            margin-left: 0.25rem;
+        }
+        .chart-container {
+            grid-column: span 2;
+            height: 300px;
+        }
+        @media (max-width: 768px) {
+            .chart-container {
+                grid-column: span 1;
+            }
+        }
+        .error-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .error-item {
+            background: #1a1a2e;
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+            border-radius: 4px;
+            font-size: 0.875rem;
+        }
+        .error-item .component {
+            color: #f87171;
+            font-weight: 600;
+        }
+        .error-item .message {
+            color: #94a3b8;
+            margin-top: 0.25rem;
+        }
+        .error-item .timestamp {
+            color: #64748b;
+            font-size: 0.75rem;
+            margin-top: 0.25rem;
+        }
+        .drops-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .drops-table th, .drops-table td {
+            text-align: left;
+            padding: 0.5rem;
+            border-bottom: 1px solid #0f3460;
+        }
+        .drops-table th {
+            color: #94a3b8;
+            font-weight: 500;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+        }
+        .no-data {
+            color: #64748b;
+            font-style: italic;
+            text-align: center;
+            padding: 2rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>cvpipe Dashboard <span class="status"><span class="status-dot" id="status-dot"></span><span id="status-text">connecting...</span></span></h1>
+    </div>
+    <div class="container">
+        <div class="grid">
+            <div class="card">
+                <h2>FPS</h2>
+                <div><span class="value" id="fps-value">--</span><span class="unit">fps</span></div>
+            </div>
+            <div class="card">
+                <h2>Frames Processed</h2>
+                <div><span class="value" id="frames-value">--</span></div>
+            </div>
+            <div class="card">
+                <h2>Uptime</h2>
+                <div><span class="value" id="uptime-value">--</span></div>
+            </div>
+            <div class="card">
+                <h2>Errors</h2>
+                <div><span class="value" id="errors-value">--</span></div>
+            </div>
+        </div>
+        <div class="grid">
+            <div class="card chart-container">
+                <h2>Latency Time Series</h2>
+                <canvas id="latency-chart"></canvas>
+            </div>
+            <div class="card chart-container">
+                <h2>Latency Distribution</h2>
+                <canvas id="latency-bar"></canvas>
+            </div>
+        </div>
+        <div class="grid">
+            <div class="card">
+                <h2>Frame Drops</h2>
+                <table class="drops-table">
+                    <thead>
+                        <tr><th>Reason</th><th>Count</th></tr>
+                    </thead>
+                    <tbody id="drops-table">
+                        <tr><td colspan="2" class="no-data">No data</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="card">
+                <h2>Recent Errors</h2>
+                <div class="error-list" id="error-list">
+                    <div class="no-data">No errors</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        const latencyChartCtx = document.getElementById('latency-chart').getContext('2d');
+        const latencyBarCtx = document.getElementById('latency-bar').getContext('2d');
+        
+        const latencyChart = new Chart(latencyChartCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: []
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                scales: {
+                    x: { display: false },
+                    y: {
+                        title: { display: true, text: 'Latency (ms)', color: '#94a3b8' },
+                        grid: { color: '#0f3460' },
+                        ticks: { color: '#94a3b8' }
+                    }
+                },
+                plugins: {
+                    legend: { labels: { color: '#94a3b8' } }
+                }
+            }
+        });
+
+        const latencyBar = new Chart(latencyBarCtx, {
+            type: 'bar',
+            data: {
+                labels: [],
+                datasets: [
+                    { label: 'p50', data: [], backgroundColor: '#4ade80' },
+                    { label: 'p95', data: [], backgroundColor: '#fbbf24' },
+                    { label: 'p99', data: [], backgroundColor: '#f87171' }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { grid: { color: '#0f3460' }, ticks: { color: '#94a3b8' } },
+                    y: {
+                        title: { display: true, text: 'Latency (ms)', color: '#94a3b8' },
+                        grid: { color: '#0f3460' },
+                        ticks: { color: '#94a3b8' }
+                    }
+                },
+                plugins: {
+                    legend: { labels: { color: '#94a3b8' } }
+                }
+            }
+        });
+
+        let ws;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 10;
+
+        function connect() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws/metrics`);
+            
+            ws.onopen = () => {
+                reconnectAttempts = 0;
+                document.getElementById('status-text').textContent = 'connected';
+                document.getElementById('status-dot').classList.remove('stopped');
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                updateDashboard(data);
+            };
+            
+            ws.onclose = () => {
+                document.getElementById('status-text').textContent = 'disconnected';
+                document.getElementById('status-dot').classList.add('stopped');
+                if (reconnectAttempts < maxReconnectAttempts) {
+                    reconnectAttempts++;
+                    setTimeout(connect, 1000 * reconnectAttempts);
+                }
+            };
+            
+            ws.onerror = () => {
+                ws.close();
+            };
+        }
+
+        function updateDashboard(data) {
+            document.getElementById('fps-value').textContent = data.fps?.current?.toFixed(1) || '--';
+            document.getElementById('frames-value').textContent = data.state?.frame_count?.toLocaleString() || '--';
+            document.getElementById('uptime-value').textContent = formatUptime(data.state?.uptime_seconds || 0);
+            document.getElementById('errors-value').textContent = data.errors?.total || 0;
+
+            const statusText = document.getElementById('status-text');
+            const statusDot = document.getElementById('status-dot');
+            if (data.state?.status === 'running') {
+                statusText.textContent = 'running';
+                statusDot.classList.remove('stopped');
+            } else {
+                statusText.textContent = data.state?.status || 'unknown';
+                statusDot.classList.add('stopped');
+            }
+
+            updateDrops(data.drops);
+            updateErrors(data.errors);
+            updateLatencyCharts(data.latency, data.latency_history);
+        }
+
+        function formatUptime(seconds) {
+            if (seconds < 60) return `${Math.floor(seconds)}s`;
+            if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s`;
+            const hours = Math.floor(seconds / 3600);
+            const mins = Math.floor((seconds % 3600) / 60);
+            return `${hours}h ${mins}m`;
+        }
+
+        function updateDrops(drops) {
+            const tbody = document.getElementById('drops-table');
+            if (!drops?.by_reason || Object.keys(drops.by_reason).length === 0) {
+                tbody.innerHTML = '<tr><td colspan="2" class="no-data">No drops</td></tr>';
+                return;
+            }
+            const rows = Object.entries(drops.by_reason)
+                .map(([reason, count]) => `<tr><td>${reason}</td><td>${count}</td></tr>`)
+                .join('');
+            tbody.innerHTML = rows;
+        }
+
+        function updateErrors(errors) {
+            const container = document.getElementById('error-list');
+            if (!errors?.recent || errors.recent.length === 0) {
+                container.innerHTML = '<div class="no-data">No errors</div>';
+                return;
+            }
+            const items = errors.recent.slice(-5).reverse()
+                .map(e => `
+                    <div class="error-item">
+                        <div class="component">${e.component_id}</div>
+                        <div class="message">${escapeHtml(e.message)}</div>
+                        <div class="timestamp">${e.ts_iso || new Date(e.ts * 1000).toISOString()}</div>
+                    </div>
+                `).join('');
+            container.innerHTML = items;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function updateLatencyCharts(latency, history) {
+            if (latency) {
+                const labels = Object.keys(latency);
+                const p50 = labels.map(l => latency[l]?.p50_ms || 0);
+                const p95 = labels.map(l => latency[l]?.p95_ms || 0);
+                const p99 = labels.map(l => latency[l]?.p99_ms || 0);
+                
+                latencyBar.data.labels = labels;
+                latencyBar.data.datasets[0].data = p50;
+                latencyBar.data.datasets[1].data = p95;
+                latencyBar.data.datasets[2].data = p99;
+                latencyBar.update();
+            }
+
+            if (history && Object.keys(history).length > 0) {
+                const firstComp = Object.keys(history)[0];
+                const series = history[firstComp] || [];
+                const labels = series.map(s => new Date(s.ts * 1000).toLocaleTimeString());
+                const values = series.map(s => s.latency_ms);
+                
+                latencyChart.data.labels = labels;
+                latencyChart.data.datasets = Object.entries(history).map(([comp, data]) => ({
+                    label: comp,
+                    data: data.map(s => s.latency_ms),
+                    borderColor: getComponentColor(comp),
+                    fill: false,
+                    tension: 0.1
+                }));
+                latencyChart.update();
+            }
+        }
+
+        const colors = ['#4ade80', '#60a5fa', '#fbbf24', '#f87171', '#a78bfa', '#f472b6'];
+        function getComponentColor(comp) {
+            const idx = Math.abs(comp.split('').reduce((a, c) => a + c.charCodeAt(0), 0)) % colors.length;
+            return colors[idx];
+        }
+
+        connect();
+    </script>
+</body>
+</html>
