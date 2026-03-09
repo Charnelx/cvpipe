@@ -26,4 +26,4 @@ ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000
 
 # Download model then start uvicorn
-CMD ["sh", "-c", "python scripts/download_model.py && uvicorn detector.app:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "python scripts/download_model.py && uvicorn detector.app:app --host 0.0.0.0 --port 8000", "--log-level", "debug"]

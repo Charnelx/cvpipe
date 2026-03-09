@@ -87,7 +87,7 @@ wheels = [
 
 [[package]]
 name = "cvpipe"
-version = "0.1.4.2"
+version = "0.1.4.3"
 source = { editable = "." }
 dependencies = [
     { name = "pyyaml" },

@@ -155,14 +155,12 @@ class DashboardServer:
     def _run_server(self) -> None:
         import uvicorn
 
-        config = uvicorn.Config(
+        uvicorn.run(
             self._app,
             host=self._host,
             port=self._port,
             log_level="warning",
         )
-        server = uvicorn.Server(config)
-        server.run()
 
     def stop(self) -> None:
         """Stop the server."""
