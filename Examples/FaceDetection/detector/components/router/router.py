@@ -1,4 +1,5 @@
 from cvpipe import Component, Frame, SlotSchema
+import numpy as np
 
 from detector.events import InferenceToggleEvent
 
@@ -12,7 +13,7 @@ class Router(Component):
     INPUTS = []
     OUTPUTS = [
         SlotSchema("inference_enabled", bool, description="Whether to run face detection"),
-        SlotSchema("frame_bgr", type(None), description="Promotes frame_raw dict to bgr slot"),
+        SlotSchema("frame_bgr", np.ndarray, description="Promotes frame_raw dict to bgr slot"),
     ]
     SUBSCRIBES = [InferenceToggleEvent]
 
