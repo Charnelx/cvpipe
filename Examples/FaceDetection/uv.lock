@@ -188,8 +188,8 @@ wheels = [
 
 [[package]]
 name = "cvpipe"
-version = "0.1.4.2"
-source = { git = "https://github.com/Charnelx/cvpipe.git?rev=v0.1.4.2#51fee22fa3f6eeeb8ff276fdb9d4c6c6341a2cdf" }
+version = "0.1.4.3"
+source = { git = "https://github.com/Charnelx/cvpipe.git?rev=v0.1.4.3#a6fd32bbe68aa5f2e130d0b63def8e72b5eb0dd3" }
 dependencies = [
     { name = "pyyaml" },
     { name = "torch" },
@@ -225,7 +225,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cvpipe", extras = ["dashboard"], git = "https://github.com/Charnelx/cvpipe.git?rev=v0.1.4.2" },
+    { name = "cvpipe", extras = ["dashboard"], git = "https://github.com/Charnelx/cvpipe.git?rev=v0.1.4.3" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "onnxruntime-gpu", specifier = ">=1.19.0" },
     { name = "opencv-python-headless", specifier = ">=4.10.0" },

@@ -13,12 +13,23 @@ from cvpipe.dashboard.aggregator import (
 )
 from cvpipe.dashboard.collector import MetricsCollector
 from cvpipe.dashboard.prometheus import render_prometheus
+from cvpipe.dashboard.server import DashboardServer
 from cvpipe import (
     ComponentErrorEvent,
     ComponentMetricEvent,
     FrameDroppedEvent,
     PipelineStateEvent,
 )
+from cvpipe.bus import ResultBus
+from cvpipe.event import EventBus
+
+
+class MockPipeline:
+    """Mock Pipeline for testing DashboardServer."""
+
+    def __init__(self) -> None:
+        self.event_bus = EventBus()
+        self.result_bus = ResultBus(capacity=4)
 
 
 class TestComputePercentiles:
@@ -403,3 +414,72 @@ class TestRenderPrometheus:
         result = render_prometheus(metrics)
         assert 'cvpipe_custom_metric{category="gpu"' in result
         assert "memory_mb" in result
+
+
+class TestDashboardServer:
+    """Tests for DashboardServer HTTP/WebSocket endpoints."""
+
+    def test_websocket_route_registered(self) -> None:
+        collector = MetricsCollector(latency_window=10)
+        mock_pipeline = MockPipeline()
+        server = DashboardServer(
+            collector=collector,
+            pipeline=mock_pipeline,  # type: ignore[arg-type]
+            port=8881,
+            websocket=True,
+        )
+
+        routes = [r.path for r in server._app.routes]
+        assert "/ws/metrics" in routes
+
+    def test_http_routes_registered(self) -> None:
+        collector = MetricsCollector()
+        mock_pipeline = MockPipeline()
+        server = DashboardServer(
+            collector=collector,
+            pipeline=mock_pipeline,  # type: ignore[arg-type]
+            port=8881,
+            prometheus=True,
+        )
+
+        routes = [r.path for r in server._app.routes]
+        assert "/" in routes
+        assert "/api/v1/metrics" in routes
+        assert "/api/v1/metrics/latency" in routes
+        assert "/api/v1/metrics/drops" in routes
+        assert "/api/v1/metrics/errors" in routes
+        assert "/api/v1/metrics/state" in routes
+        assert "/api/v1/metrics/fps" in routes
+        assert "/metrics" in routes
+
+    def test_websocket_disabled(self) -> None:
+        collector = MetricsCollector()
+        mock_pipeline = MockPipeline()
+        server = DashboardServer(
+            collector=collector,
+            pipeline=mock_pipeline,  # type: ignore[arg-type]
+            port=8881,
+            websocket=False,
+        )
+
+        routes = [r.path for r in server._app.routes]
+        assert "/ws/metrics" not in routes
+
+    def test_websocket_handler_is_async(self) -> None:
+        collector = MetricsCollector()
+        mock_pipeline = MockPipeline()
+        server = DashboardServer(
+            collector=collector,
+            pipeline=mock_pipeline,  # type: ignore[arg-type]
+            port=8881,
+            websocket=True,
+        )
+
+        routes = [r for r in server._app.routes if r.path == "/ws/metrics"]
+        assert len(routes) == 1
+        route = routes[0]
+
+        assert hasattr(route, "endpoint")
+        import inspect
+
+        assert inspect.iscoroutinefunction(route.endpoint)
