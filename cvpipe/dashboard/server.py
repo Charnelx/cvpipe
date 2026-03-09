@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import socket
 import threading
 import time
 from pathlib import Path
@@ -110,7 +111,7 @@ class DashboardServer:
                         await websocket.send_json(data)
                         await asyncio.sleep(self._update_interval)
                 except Exception:
-                    pass
+                    logger.exception("[Dashboard] WebSocket error")
 
     def _render_html(self) -> str:
         template_path = Path(__file__).parent / "templates" / "index.html"
@@ -130,11 +131,26 @@ class DashboardServer:
             daemon=True,
         )
         self._thread.start()
+        self._wait_until_ready(timeout=5.0)
         logger.info(
             "[Dashboard] Server started at http://%s:%d",
             self._host,
             self._port,
         )
+
+    def _wait_until_ready(self, timeout: float) -> None:
+        """Wait for uvicorn server to be ready to accept connections."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1)
+                sock.connect((self._host, self._port))
+                sock.close()
+                return
+            except (ConnectionRefusedError, socket.timeout, OSError):
+                time.sleep(0.1)
+        logger.warning("[Dashboard] Server ready wait timed out")
 
     def _run_server(self) -> None:
         import uvicorn
