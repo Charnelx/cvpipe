@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Set
 
 from cvpipe import build
+from cvpipe.dashboard import enable_dashboard
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,6 +23,7 @@ COMPONENTS_DIR = Path("detector/components")
 
 pipeline = None
 
+
 class StreamManager:
     def __init__(self):
         self.queues: Set[asyncio.Queue] = set()
@@ -33,7 +35,7 @@ class StreamManager:
         jpeg_bytes = result.jpeg_bytes
         if not jpeg_bytes:
             return
-            
+
         for q in list(self.queues):
             try:
                 self.loop.call_soon_threadsafe(q.put_nowait, jpeg_bytes)
@@ -41,6 +43,7 @@ class StreamManager:
                 pass
             except Exception:
                 pass
+
 
 stream_manager = StreamManager()
 
@@ -58,6 +61,7 @@ def startup_event():
     pipeline = build(CONFIG_PATH, COMPONENTS_DIR)
     pipeline.result_bus.subscribe(lambda result: stream_manager.push(result))
     pipeline.validate()
+    enable_dashboard(pipeline)
     pipeline.start()
 
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cvpipe"
-version = "0.1.1"
+version = "0.1.4"
 requires-python = ">=3.10"
 dependencies = [
     "PyYAML>=6.0.3",
@@ -19,3 +19,6 @@ dashboard = [
 
 [tool.setuptools.packages.find]
 where = ["."]
+
+[tool.setuptools.package-data]
+cvpipe.dashboard = ["templates/*.html"]
