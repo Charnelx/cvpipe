@@ -5,7 +5,7 @@ description = "Face detection app build with cvpipe"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "cvpipe @ git+https://github.com/Charnelx/cvpipe.git@v0.1.3",
+    "cvpipe @ git+https://github.com/Charnelx/cvpipe.git@v0.1.4",
     "fastapi>=0.115.0",
     "uvicorn>=0.30.6",
     "opencv-python-headless>=4.10.0",
