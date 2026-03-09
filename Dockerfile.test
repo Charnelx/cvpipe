@@ -4,6 +4,7 @@ WORKDIR /app
 
 RUN pip install pytest pytest-cov pyyaml pytest-asyncio ruff
 RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
+RUN pip install fastapi uvicorn
 
 COPY pyproject.toml ./
 COPY cvpipe/ ./cvpipe/

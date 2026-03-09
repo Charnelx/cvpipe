@@ -286,6 +286,115 @@ is more appropriate for a running server.
 
 ---
 
+## Dashboard
+
+cvpipe includes a built-in metrics dashboard for real-time pipeline monitoring. Enable it with a single call before `pipeline.start()`:
+
+```python
+from cvpipe import build
+from cvpipe.dashboard import enable_dashboard
+
+pipeline = build(config_path, components_dir)
+pipeline.validate()
+enable_dashboard(pipeline)
+pipeline.start()
+```
+
+The dashboard provides:
+
+- **Real-time latency charts** (p50, p95, p99 per component)
+- **Frame drop tracking** (by reason)
+- **Error logs** with full tracebacks
+- **FPS monitoring** using exponential moving average
+- **Prometheus endpoint** for integration with monitoring systems
+- **WebSocket streaming** for live updates
+
+Access the dashboard at `http://localhost:8881`.
+
+### Configuration
+
+```python
+from cvpipe.dashboard import enable_dashboard, DashboardConfig
+
+enable_dashboard(pipeline, DashboardConfig(
+    port=8881,
+    host="127.0.0.1",
+    prometheus=True,
+    websocket=True,
+    latency_window=500,
+    history_duration_minutes=10.0,
+    fps_alpha=0.05,  # Smoother FPS
+))
+```
+
+### API Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /` | HTML dashboard |
+| `GET /api/v1/metrics` | Full metrics JSON |
+| `GET /api/v1/metrics/latency` | Latency percentiles |
+| `GET /api/v1/metrics/drops` | Frame drop counts |
+| `GET /api/v1/metrics/errors` | Error statistics |
+| `GET /api/v1/metrics/state` | Pipeline state |
+| `GET /api/v1/metrics/fps` | Current FPS |
+| `GET /api/v1/metrics/history` | Latency time series |
+| `GET /metrics` | Prometheus format |
+| `WS /ws/metrics` | WebSocket streaming |
+| `POST /api/v1/metrics/export` | Export metrics to file |
+
+### Custom Telemetry
+
+Register custom event handlers to track application-specific metrics:
+
+```python
+from dataclasses import dataclass
+from cvpipe import Event, Component
+from cvpipe.dashboard import enable_dashboard
+
+@dataclass(frozen=True)
+class GPUMemoryEvent(Event):
+    component_id: str
+    memory_mb: float
+    utilization_pct: float
+
+# In your component
+class YOLODetector(Component):
+    def process(self, frame):
+        # ... inference ...
+        self.emit(GPUMemoryEvent(
+            component_id=self._component_id,
+            memory_mb=torch.cuda.memory_allocated() / 1e6,
+            utilization_pct=torch.cuda.utilization(),
+        ))
+
+# Register handler
+def handle_gpu_event(event):
+    return {
+        event.component_id: {
+            "memory_mb": event.memory_mb,
+            "utilization_pct": event.utilization_pct,
+        }
+    }
+
+pipeline = build(config_path, components_dir)
+server = enable_dashboard(pipeline)
+pipeline._dashboard_collector.register_custom_event(GPUMemoryEvent, handle_gpu_event)
+pipeline.start()
+```
+
+### Dependencies
+
+The dashboard requires `fastapi` and `uvicorn`. Install with:
+
+```bash
+pip install cvpipe[dashboard]
+```
+
+If dependencies are not installed, `enable_dashboard()` logs a warning and returns `None`.
+
+---
+
 ## Next Steps
 
 - [API Reference](./api_reference.md) — Complete reference for all classes and methods
