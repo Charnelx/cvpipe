@@ -1,0 +1,1 @@
+include cvpipe/dashboard/templates/*.html
