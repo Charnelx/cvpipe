@@ -114,6 +114,8 @@ class DashboardServer:
             return {"status": "ok", "path": path}
 
         if self._websocket:
+            from starlette.websockets import WebSocketDisconnect
+
             @self._app.websocket("/ws/metrics")
             async def websocket_metrics(websocket: WebSocket) -> None:
                 await websocket.accept()
@@ -122,9 +124,10 @@ class DashboardServer:
                         data = self._collector.snapshot()
                         await websocket.send_json(data)
                         await asyncio.sleep(self._update_interval)
+                except WebSocketDisconnect:
+                    logger.info("[Dashboard] WebSocket client disconnected")
                 except Exception:
                     logger.exception("[Dashboard] WebSocket error")
-
 
     def _render_html(self) -> str:
         template_path = Path(__file__).parent / "templates" / "index.html"
@@ -167,6 +170,7 @@ class DashboardServer:
 
     def _run_server(self) -> None:
         import uvicorn
+
         config = uvicorn.Config(
             self._app,
             host=self._host,
