@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
+from starlette.websockets import WebSocketDisconnect
 
 
 if TYPE_CHECKING:
@@ -114,8 +115,6 @@ class DashboardServer:
             return {"status": "ok", "path": path}
 
         if self._websocket:
-            from starlette.websockets import WebSocketDisconnect
-
             @self._app.websocket("/ws/metrics")
             async def websocket_metrics(websocket: WebSocket) -> None:
                 await websocket.accept()
