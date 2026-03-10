@@ -1,0 +1,48 @@
+# Version control
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info
+.eggs
+dist
+build
+.venv
+venv
+ENV
+.eggs
+
+# Testing & development (keep these for Dockerfile.test)
+# tests/ - needed for running tests
+# benchmarks/ - needed for benchmarks
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# Documentation (not needed in Docker)
+Documentation
+
+# Examples (not needed for base package)
+Examples
+
+# IDEs
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.log
+
+# Root files
+AGENTS.md

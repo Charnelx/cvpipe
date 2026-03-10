@@ -49,9 +49,21 @@ class DashboardServer:
 
     def _setup_routes(self) -> None:
         from fastapi import FastAPI, WebSocket
+        from fastapi.middleware.cors import CORSMiddleware
         from fastapi.responses import HTMLResponse, PlainTextResponse
 
         self._app = FastAPI(title="cvpipe Dashboard")
+
+        # --- CORS middleware ---
+        self._app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],  # For development. Restrict in production.
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+        # -----------------------
 
         @self._app.get("/", response_class=HTMLResponse)
         async def dashboard() -> str:
