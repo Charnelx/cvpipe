@@ -305,7 +305,7 @@ The dashboard provides:
 - **Real-time latency charts** (p50, p95, p99 per component)
 - **Frame drop tracking** (by reason)
 - **Error logs** with full tracebacks
-- **FPS monitoring** using exponential moving average
+- **FPS monitoring** using exponential moving average, tracking only the terminal component
 - **Prometheus endpoint** for integration with monitoring systems
 - **WebSocket streaming** for live updates
 
@@ -325,7 +325,26 @@ enable_dashboard(pipeline, DashboardConfig(
     history_duration_minutes=10.0,
     fps_alpha=0.05,  # Smoother FPS
 ))
-```
+
+### FPS Calculation
+
+The FPS calculator uses **consecutive frame indices** from `ComponentMetricEvent` to determine the frame rate, rather than relying solely on timestamps. This provides more accurate measurements.
+
+**How it works:**
+1. The dashboard tracks the **last component in the pipeline** (auto-detected from `pipeline._components[-1]._component_id`)
+2. FPS is calculated using the delta between consecutive `frame_idx` values
+3. Uses an exponential moving average (EMA) with configurable `alpha` (default: 0.1)
+
+**Staleness Detection:**
+- **Warning** (5 seconds): Logs `"Frame stall detected, FPS may be inaccurate"` when no new frames arrive for 5 seconds
+- **Reset** (10 seconds): Logs `"FPS reset due to stall"` and resets FPS to 0 when no new frames arrive for 10 seconds
+
+**Frame Skip Handling:**
+- If `frame_idx` skips forward (non-consecutive) or goes backwards, FPS resets to 0
+- This handles camera stream resets, stream restarts, or other discontinuities
+
+**Recovery:**
+- When a new consecutive frame arrives after staleness, FPS tracking automatically resumes
 
 ### API Endpoints
 

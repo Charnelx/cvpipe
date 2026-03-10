@@ -61,14 +61,14 @@ class TestFPSCalculator:
 
     def test_single_update_returns_zero(self) -> None:
         fps = FPSCalculator(alpha=0.5)
-        fps.update(0.0)
+        fps.update(0.0, 0)
         assert fps.get() == 0.0
 
     def test_ema_calculation(self) -> None:
         fps = FPSCalculator(alpha=0.5)
-        fps.update(0.0)
-        fps.update(0.033)
-        fps.update(0.066)
+        fps.update(0.0, 0)
+        fps.update(0.033, 1)
+        fps.update(0.066, 2)
 
         assert 20 < fps.get() < 40
 
@@ -83,10 +83,14 @@ class TestFPSCalculator:
     def test_thread_safety(self) -> None:
         fps = FPSCalculator(alpha=0.1)
         errors: list[Exception] = []
+        counter = [0]
 
         def writer() -> None:
             for i in range(100):
-                fps.update(float(i) * 0.033)
+                with threading.Lock():
+                    frame_idx = counter[0]
+                    counter[0] += 1
+                fps.update(float(i) * 0.033, frame_idx)
 
         def reader() -> None:
             for _ in range(100):
@@ -106,6 +110,49 @@ class TestFPSCalculator:
             t.join()
 
         assert len(errors) == 0
+
+    def test_frame_skip_resets_fps(self) -> None:
+        fps = FPSCalculator(alpha=0.5)
+        fps.update(0.0, 0)
+        fps.update(0.033, 1)
+        fps.update(0.066, 2)
+        assert fps.get() > 0
+
+        fps.update(0.100, 10)
+        assert fps.get() == 0.0
+
+    def test_frame_backwards_resets_fps(self) -> None:
+        fps = FPSCalculator(alpha=0.5)
+        fps.update(0.0, 0)
+        fps.update(0.033, 1)
+        fps.update(0.066, 2)
+        assert fps.get() > 0
+
+        fps.update(0.099, 0)
+        assert fps.get() == 0.0
+
+    def test_consecutive_frames_tracks_fps(self) -> None:
+        fps = FPSCalculator(alpha=0.5)
+        fps.update(0.0, 0)
+        fps.update(0.033, 1)
+        fps.update(0.066, 2)
+        fps.update(0.099, 3)
+
+        assert 20 < fps.get() < 40
+
+    def test_staleness_warning_threshold(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        fps = FPSCalculator(alpha=0.5)
+        fps.update(0.0, 0)
+        fps.update(0.033, 1)
+
+        with caplog.at_level(logging.WARNING):
+            fps.update(6.0, 2)
+
+        assert "Frame stall detected" in caplog.text
 
 
 class TestLatencyHistory:

@@ -4,6 +4,7 @@ services:
   app:
     build:
       context: .
+      dockerfile: Dockerfile.local
     ports:
       - "8000:8000"
       - "8881:8881"

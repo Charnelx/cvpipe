@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
 import threading
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -51,9 +55,15 @@ class FPSCalculator:
 
     Lower alpha = smoother, slower to respond.
     Higher alpha = more responsive, noisier.
+
+    Uses frame_idx to track consecutive frames for accurate FPS calculation.
+    Resets FPS on frame skips or stalls (>10s without frames).
     """
 
-    def __init__(self, alpha: float = 0.1):
+    _STALENESS_WARNING_THRESHOLD = 5.0
+    _STALENESS_RESET_THRESHOLD = 10.0
+
+    def __init__(self, alpha: float = 0.1, target_component_id: str | None = None):
         """
         Parameters
         ----------
@@ -61,17 +71,82 @@ class FPSCalculator:
             Smoothing factor (0 < alpha < 1).
             - 0.1: responds to changes over ~10 frames
             - 0.05: responds over ~20 frames
+        target_component_id : str | None
+            If set, only update FPS for events from this component.
+            If None, track all events (backward compatible).
         """
         if not 0 < alpha < 1:
             raise ValueError("alpha must be between 0 and 1")
         self._alpha = alpha
+        self._target_component_id = target_component_id
         self._lock = threading.Lock()
         self._ema: float | None = None
         self._last_ts: float | None = None
+        self._last_frame_idx: int | None = None
+        self._last_update_ts: float | None = None
+        self._is_stale_warning_logged = False
 
-    def update(self, ts: float) -> None:
-        """Call on each frame with its timestamp."""
+    def update(
+        self, ts: float, frame_idx: int, component_id: str | None = None
+    ) -> None:
+        """
+        Update FPS based on frame_idx and timestamp.
+
+        Parameters
+        ----------
+        ts : float
+            Monotonic timestamp of the event.
+        frame_idx : int
+            Frame index from ComponentMetricEvent.
+        component_id : str | None
+            Component ID for filtering (if target_component_id is set).
+        """
+        if (
+            self._target_component_id is not None
+            and component_id != self._target_component_id
+        ):
+            return
+
         with self._lock:
+            self._handle_staleness(ts)
+            self._update_fps(ts, frame_idx)
+
+    def _handle_staleness(self, ts: float) -> None:
+        """Check for staleness and reset FPS if needed."""
+        if self._last_update_ts is None:
+            return
+
+        time_since_update = ts - self._last_update_ts
+
+        if time_since_update > self._STALENESS_RESET_THRESHOLD:
+            logger.warning(
+                "[FPSCalculator] FPS reset due to stall (%.1fs without frames)",
+                time_since_update,
+            )
+            self._ema = None
+            self._last_ts = None
+            self._last_frame_idx = None
+            self._last_update_ts = ts
+            self._is_stale_warning_logged = False
+        elif (
+            time_since_update > self._STALENESS_WARNING_THRESHOLD
+            and not self._is_stale_warning_logged
+        ):
+            logger.warning(
+                "[FPSCalculator] Frame stall detected, FPS may be inaccurate (%.1fs without new frame)",
+                time_since_update,
+            )
+            self._is_stale_warning_logged = True
+
+    def _update_fps(self, ts: float, frame_idx: int) -> None:
+        """Update FPS based on consecutive frame_idx."""
+        if self._last_frame_idx is None:
+            self._last_frame_idx = frame_idx
+            self._last_update_ts = ts
+            self._is_stale_warning_logged = False
+            return
+
+        if frame_idx == self._last_frame_idx + 1:
             if self._last_ts is not None:
                 delta = ts - self._last_ts
                 if delta > 0:
@@ -83,6 +158,15 @@ class FPSCalculator:
                             self._alpha * instant_fps + (1 - self._alpha) * self._ema
                         )
             self._last_ts = ts
+            self._last_frame_idx = frame_idx
+            self._last_update_ts = ts
+            if self._is_stale_warning_logged:
+                self._is_stale_warning_logged = False
+        else:
+            self._ema = None
+            self._last_ts = None
+            self._last_frame_idx = frame_idx
+            self._last_update_ts = ts
 
     def get(self) -> float:
         """Return current EMA FPS."""
