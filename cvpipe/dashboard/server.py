@@ -11,6 +11,11 @@ from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
 
+from fastapi import FastAPI, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, PlainTextResponse
+
+
 if TYPE_CHECKING:
     from cvpipe import Pipeline
     from cvpipe.dashboard.collector import MetricsCollector
@@ -48,16 +53,12 @@ class DashboardServer:
         self._setup_routes()
 
     def _setup_routes(self) -> None:
-        from fastapi import FastAPI, WebSocket
-        from fastapi.middleware.cors import CORSMiddleware
-        from fastapi.responses import HTMLResponse, PlainTextResponse
-
         self._app = FastAPI(title="cvpipe Dashboard")
 
         # --- CORS middleware ---
         self._app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],  # For development. Restrict in production.
+            allow_origins=["http://localhost:8881", "http://127.0.0.1:8881"],
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
@@ -112,16 +113,18 @@ class DashboardServer:
                 json.dump(data, f, indent=2)
             return {"status": "ok", "path": path}
 
-        @self._app.websocket("/ws/metrics")
-        async def websocket_metrics(websocket: WebSocket) -> None:
-            await websocket.accept()
-            try:
-                while self._running:
-                    data = self._collector.snapshot()
-                    await websocket.send_json(data)
-                    await asyncio.sleep(self._update_interval)
-            except Exception:
-                logger.exception("[Dashboard] WebSocket error")
+        if self._websocket:
+            @self._app.websocket("/ws/metrics")
+            async def websocket_metrics(websocket: WebSocket) -> None:
+                await websocket.accept()
+                try:
+                    while self._running:
+                        data = self._collector.snapshot()
+                        await websocket.send_json(data)
+                        await asyncio.sleep(self._update_interval)
+                except Exception:
+                    logger.exception("[Dashboard] WebSocket error")
+
 
     def _render_html(self) -> str:
         template_path = Path(__file__).parent / "templates" / "index.html"
@@ -164,13 +167,15 @@ class DashboardServer:
 
     def _run_server(self) -> None:
         import uvicorn
-
-        uvicorn.run(
+        config = uvicorn.Config(
             self._app,
             host=self._host,
             port=self._port,
             log_level="info",
+            ws="auto",
         )
+        server = uvicorn.Server(config)
+        server.run()
 
     def stop(self) -> None:
         """Stop the server."""
