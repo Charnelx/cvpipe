@@ -100,18 +100,16 @@ class DashboardServer:
                 json.dump(data, f, indent=2)
             return {"status": "ok", "path": path}
 
-        if self._websocket:
-
-            @self._app.websocket("/ws/metrics")
-            async def websocket_metrics(websocket: WebSocket) -> None:
-                await websocket.accept()
-                try:
-                    while self._running:
-                        data = self._collector.snapshot()
-                        await websocket.send_json(data)
-                        await asyncio.sleep(self._update_interval)
-                except Exception:
-                    logger.exception("[Dashboard] WebSocket error")
+        @self._app.websocket("/ws/metrics")
+        async def websocket_metrics(websocket: WebSocket) -> None:
+            await websocket.accept()
+            try:
+                while self._running:
+                    data = self._collector.snapshot()
+                    await websocket.send_json(data)
+                    await asyncio.sleep(self._update_interval)
+            except Exception:
+                logger.exception("[Dashboard] WebSocket error")
 
     def _render_html(self) -> str:
         template_path = Path(__file__).parent / "templates" / "index.html"
@@ -159,7 +157,7 @@ class DashboardServer:
             self._app,
             host=self._host,
             port=self._port,
-            log_level="warning",
+            log_level="info",
         )
 
     def stop(self) -> None:
