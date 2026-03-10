@@ -5,7 +5,7 @@ description = "Face detection app build with cvpipe"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "cvpipe[dashboard]==0.1.4.7",
+    "cvpipe[dashboard] @ git+https://github.com/Charnelx/cvpipe.git@v0.1.4.8",
     "fastapi>=0.115.0",
     "uvicorn>=0.30.6",
     "opencv-python-headless>=4.10.0",
@@ -27,7 +27,7 @@ indent-width = 4
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
+select = ["E", "F", "I", "FUP", "B", "C4", "SIM"]
 
 [tool.ruff.format]
 indent-style = "space"

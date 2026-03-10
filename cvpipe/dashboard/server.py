@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
+from starlette.websockets import WebSocketDisconnect
 
 
 if TYPE_CHECKING:
@@ -122,9 +123,10 @@ class DashboardServer:
                         data = self._collector.snapshot()
                         await websocket.send_json(data)
                         await asyncio.sleep(self._update_interval)
+                except WebSocketDisconnect:
+                    logger.info("[Dashboard] WebSocket client disconnected")
                 except Exception:
                     logger.exception("[Dashboard] WebSocket error")
-
 
     def _render_html(self) -> str:
         template_path = Path(__file__).parent / "templates" / "index.html"
@@ -167,6 +169,7 @@ class DashboardServer:
 
     def _run_server(self) -> None:
         import uvicorn
+
         config = uvicorn.Config(
             self._app,
             host=self._host,
