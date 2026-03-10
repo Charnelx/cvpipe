@@ -10,7 +10,6 @@ services:
       - "8881:8881"
     volumes:
       - ./models:/app/models
-      - ../../cvpipe:/app/cvpipe:ro
     environment:
       - PYTHONUNBUFFERED=1
     deploy:

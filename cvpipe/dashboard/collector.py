@@ -30,6 +30,7 @@ class MetricsCollector:
         history_duration_minutes: float = 5.0,
         fps_alpha: float = 0.1,
         max_errors_per_component: int = 10,
+        fps_target_component_id: str | None = None,
     ) -> None:
         self._latency_window = latency_window
         self._lock = threading.Lock()
@@ -40,7 +41,10 @@ class MetricsCollector:
             duration_minutes=history_duration_minutes
         )
 
-        self._fps_calculator = FPSCalculator(alpha=fps_alpha)
+        self._fps_calculator = FPSCalculator(
+            alpha=fps_alpha,
+            target_component_id=fps_target_component_id,
+        )
 
         self._drop_counts: dict[str, int] = {}
 
@@ -66,7 +70,7 @@ class MetricsCollector:
 
             self._latency_history.add(event.component_id, event.ts, event.latency_ms)
 
-            self._fps_calculator.update(event.ts)
+            self._fps_calculator.update(event.ts, event.frame_idx, event.component_id)
             self._frame_count += 1
 
     def on_frame_dropped(self, event: "FrameDroppedEvent") -> None:

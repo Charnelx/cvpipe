@@ -91,11 +91,16 @@ def enable_dashboard(
 
     from .server import DashboardServer
 
+    fps_target_component_id: str | None = None
+    if pipeline._components:
+        fps_target_component_id = pipeline._components[-1]._component_id
+
     collector = MetricsCollector(
         latency_window=config.latency_window,
         history_duration_minutes=config.history_duration_minutes,
         fps_alpha=config.fps_alpha,
         max_errors_per_component=config.max_errors_per_component,
+        fps_target_component_id=fps_target_component_id,
     )
 
     from cvpipe import (
