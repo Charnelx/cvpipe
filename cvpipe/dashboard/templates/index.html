@@ -185,7 +185,10 @@
     <script>
         const latencyChartCtx = document.getElementById('latency-chart').getContext('2d');
         const latencyBarCtx = document.getElementById('latency-bar').getContext('2d');
-        
+
+        // Track user-excluded components (persist across updates)
+        const excludedComponents = new Set();
+
         const latencyChart = new Chart(latencyChartCtx, {
             type: 'line',
             data: {
@@ -205,7 +208,21 @@
                     }
                 },
                 plugins: {
-                    legend: { labels: { color: '#94a3b8' } }
+                    legend: {
+                        labels: { color: '#94a3b8' },
+                        onClick: (e, legendItem) => {
+                            const label = legendItem.text;
+                            if (excludedComponents.has(label)) {
+                                excludedComponents.delete(label);
+                            } else {
+                                excludedComponents.add(label);
+                            }
+                            const currentHistory = latencyChart._customHistory;
+                            if (currentHistory) {
+                                updateLatencyChartDatasets(currentHistory);
+                            }
+                        }
+                    }
                 }
             }
         });
@@ -334,6 +351,27 @@
             return div.innerHTML;
         }
 
+        function updateLatencyChartDatasets(history) {
+            if (!history || Object.keys(history).length === 0) return;
+
+            const firstComp = Object.keys(history)[0];
+            const series = history[firstComp] || [];
+            const labels = series.map(s => new Date(s.ts * 1000).toLocaleTimeString());
+
+            latencyChart.data.labels = labels;
+            latencyChart.data.datasets = Object.entries(history)
+                .filter(([comp]) => !excludedComponents.has(comp))
+                .map(([comp, data]) => ({
+                    label: comp,
+                    data: data.map(s => s.latency_ms),
+                    borderColor: getComponentColor(comp),
+                    borderWidth: 1,
+                    fill: false,
+                    tension: 0.1
+                }));
+            latencyChart.update('none');
+        }
+
         function updateLatencyCharts(latency, history) {
             if (latency) {
                 const labels = Object.keys(latency);
@@ -349,20 +387,8 @@
             }
 
             if (history && Object.keys(history).length > 0) {
-                const firstComp = Object.keys(history)[0];
-                const series = history[firstComp] || [];
-                const labels = series.map(s => new Date(s.ts * 1000).toLocaleTimeString());
-                const values = series.map(s => s.latency_ms);
-                
-                latencyChart.data.labels = labels;
-                latencyChart.data.datasets = Object.entries(history).map(([comp, data]) => ({
-                    label: comp,
-                    data: data.map(s => s.latency_ms),
-                    borderColor: getComponentColor(comp),
-                    fill: false,
-                    tension: 0.1
-                }));
-                latencyChart.update();
+                latencyChart._customHistory = history;
+                updateLatencyChartDatasets(history);
             }
         }
 
