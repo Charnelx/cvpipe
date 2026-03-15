@@ -43,6 +43,8 @@ class Pipeline:
         pipeline.is_running  → bool
     """
 
+    DEFAULT_SOURCE_READY_TIMEOUT = 10.0
+
     def __init__(
         self,
         source: FrameSource,
@@ -53,6 +55,7 @@ class Pipeline:
         branches: list[BranchSpec] | None = None,
         branch_components: dict[str, list[Component]] | None = None,
         validation_mode: Literal["off", "warn", "strict"] = "warn",
+        source_ready_timeout: float | None = None,
     ) -> None:
         self._source = source
         self._components = list(components)
@@ -64,6 +67,11 @@ class Pipeline:
         self._scheduler: Scheduler | None = None
         self._validated = False
         self._validation_mode = validation_mode
+        self._source_ready_timeout = (
+            source_ready_timeout
+            if source_ready_timeout is not None
+            else self.DEFAULT_SOURCE_READY_TIMEOUT
+        )
 
     @property
     def result_bus(self) -> ResultBus:
@@ -137,8 +145,10 @@ class Pipeline:
         5. Starts EventBus dispatch thread
         6. Starts ResultBus subscriber threads
         7. Calls source.setup()
-        8. Creates and starts Scheduler
-        9. Emits PipelineStateEvent("running")
+        8. Calls source.wait_ready() with configurable timeout
+        9. Calls component.setup() for each component
+        10. Creates and starts Scheduler
+        11. Emits PipelineStateEvent("running")
 
         Raises
         ------
@@ -180,6 +190,14 @@ class Pipeline:
         self._result_bus.start()
 
         self._source.setup()
+
+        if not self._source.wait_ready(timeout=self._source_ready_timeout):
+            logger.warning(
+                "[Pipeline] Source %s not ready after %.1fs — proceeding anyway",
+                type(self._source).__name__,
+                self._source_ready_timeout,
+            )
+
         for comp in self._components:
             try:
                 comp.setup()

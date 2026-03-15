@@ -306,3 +306,72 @@ class TestSchedulerProbes:
         scheduler.stop()
 
         assert len(observed) >= 1
+
+
+class TestFrameSourceWaitReady:
+    def test_wait_ready_default_returns_true(self) -> None:
+        """Default implementation should return True immediately."""
+        source = CounterSource(1)
+        assert source.wait_ready(timeout=1.0) is True
+
+    def test_wait_ready_timeout_returns_false(self) -> None:
+        """wait_ready() should return False after timeout."""
+        import threading
+
+        class NeverReadySource(FrameSource):
+            def __init__(self) -> None:
+                self._ready_event = threading.Event()
+
+            def setup(self) -> None:
+                pass
+
+            def teardown(self) -> None:
+                pass
+
+            def next(self) -> None:
+                return None
+
+            def wait_ready(self, timeout: float = 10.0) -> bool:
+                return self._ready_event.wait(timeout=timeout)
+
+        source = NeverReadySource()
+        start = time.monotonic()
+        result = source.wait_ready(timeout=0.1)
+        elapsed = time.monotonic() - start
+
+        assert result is False
+        assert elapsed >= 0.1
+        assert elapsed < 0.3
+
+    def test_wait_ready_signals_on_frame(self) -> None:
+        """wait_ready() should return True when frame arrives."""
+        import threading
+
+        class ReadyOnFrameSource(FrameSource):
+            def __init__(self) -> None:
+                self._ready_event = threading.Event()
+                self._frame_ready = False
+
+            def setup(self) -> None:
+                def simulate_frame():
+                    time.sleep(0.05)
+                    self._frame_ready = True
+                    self._ready_event.set()
+
+                threading.Thread(target=simulate_frame, daemon=True).start()
+
+            def teardown(self) -> None:
+                pass
+
+            def next(self) -> None:
+                return None
+
+            def wait_ready(self, timeout: float = 10.0) -> bool:
+                return self._ready_event.wait(timeout=timeout)
+
+        source = ReadyOnFrameSource()
+        source.setup()
+        result = source.wait_ready(timeout=1.0)
+
+        assert result is True
+        assert source._frame_ready is True
