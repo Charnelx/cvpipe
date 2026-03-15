@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cvpipe"
-version = "0.1.4.8"
+version = "0.1.4.10"
 requires-python = ">=3.10"
 dependencies = [
     "PyYAML>=6.0.3",
