@@ -13,6 +13,7 @@ from cvpipe.errors import PipelineConfigError
 from cvpipe.event import EventBus
 from cvpipe.frame import Frame, SlotSchema
 from cvpipe.pipeline import Pipeline
+from cvpipe.scheduler import FrameSource
 from tests.cvpipe.conftest import CounterSource
 
 
@@ -253,6 +254,92 @@ class TestPipelineLifecycle:
         pipeline.start()
         with pytest.raises(RuntimeError, match="already running"):
             pipeline.start()
+        pipeline.stop()
+
+    def test_pipeline_calls_source_wait_ready(self) -> None:
+        from cvpipe.scheduler import FrameSource
+        import threading
+
+        ready_called = []
+
+        class TrackingSource(FrameSource):
+            def setup(self) -> None:
+                pass
+
+            def teardown(self) -> None:
+                pass
+
+            def next(self):
+                return (None, time.monotonic())
+
+            def wait_ready(self, timeout: float = 10.0) -> bool:
+                ready_called.append(True)
+                return True
+
+        source = TrackingSource()
+        pipeline = Pipeline(source=source, components=[_SimpleComponentA()])
+        pipeline.start()
+        time.sleep(0.1)
+
+        assert len(ready_called) == 1
+        pipeline.stop()
+
+    def test_pipeline_waits_for_source_ready(self) -> None:
+        import threading
+
+        class SlowSource(FrameSource):
+            def __init__(self) -> None:
+                self._ready_event = threading.Event()
+                self._wait_called = False
+
+            def setup(self) -> None:
+                pass
+
+            def teardown(self) -> None:
+                pass
+
+            def next(self):
+                return (None, time.monotonic())
+
+            def wait_ready(self, timeout: float = 10.0) -> bool:
+                self._wait_called = True
+                return self._ready_event.wait(timeout=timeout)
+
+        source = SlowSource()
+        pipeline = Pipeline(source=source, components=[_SimpleComponentA()])
+        pipeline.start()
+        time.sleep(0.05)
+
+        assert source._wait_called is True
+        pipeline.stop()
+
+    def test_pipeline_logs_on_source_not_ready(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+        from cvpipe.scheduler import FrameSource
+
+        class SlowSource(FrameSource):
+            def setup(self) -> None:
+                pass
+
+            def teardown(self) -> None:
+                pass
+
+            def next(self):
+                return (None, time.monotonic())
+
+            def wait_ready(self, timeout: float = 10.0) -> bool:
+                return False
+
+        source = SlowSource()
+        pipeline = Pipeline(source=source, components=[_SimpleComponentA()])
+
+        with caplog.at_level(logging.WARNING):
+            pipeline.start()
+            time.sleep(0.05)
+
+        assert "not ready" in caplog.text.lower()
         pipeline.stop()
 
 

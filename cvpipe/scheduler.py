@@ -78,6 +78,39 @@ class FrameSource(ABC):
     def teardown(self) -> None:
         """Called once after the frame loop stops. Release devices here."""
 
+    def wait_ready(self, timeout: float = 10.0) -> bool:
+        """
+        Block until the source is ready to provide frames.
+
+        Called by Pipeline.start() after setup() and before the Scheduler
+        starts. Default implementation returns True immediately (assumes
+        synchronous setup).
+
+        Sources with asynchronous initialization (e.g., grab threads,
+        RTSP handshakes) should override this to block until the first
+        frame is available or timeout elapses.
+
+        Parameters
+        ----------
+        timeout : float
+            Maximum seconds to wait. Implementations should honor this
+            to avoid indefinite blocking during startup.
+
+        Returns
+        -------
+        bool
+            True if the source is ready to provide frames.
+            False if timeout elapsed before ready.
+
+        Notes
+        -----
+        - Called from the main/API thread, not the streaming thread
+        - Should not be called after teardown()
+        - May be called multiple times (idempotent if already ready)
+        - Implementations should log appropriately on timeout
+        """
+        return True
+
     @abstractmethod
     def next(self) -> tuple[Any, float] | None:
         """
